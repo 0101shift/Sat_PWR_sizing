@@ -10,16 +10,24 @@ export interface MissionConfig {
   raanDeg: number;
   ltanHours: number;
   epoch: string;
-  durationOrbits: number;
+  durationDays: number;
   stepSec: number;
   attitude: AttitudeMode;
   deploymentAxis: Axis;
 }
 
 export interface PowerConfig {
-  activeAreaM2: number;
-  efficiencyPct: number;
-  degradationPct: number;
+  vmpV: number;
+  impA: number;
+  vscV: number;
+  iscA: number;
+  cellAreaCm2: number;
+  seriesCells: number;
+  parallelStrings: number;
+  packagingEfficiencyPct: number;
+  fluenceE14Cm2: number;
+  fluenceLossPctPerE14: number;
+  nonRadiationEolPct: number;
   systemLossPct: number;
   averageLoadW: number;
   batteryWh: number;
@@ -58,6 +66,17 @@ export interface SimulationMetrics {
   finalSocPct: number;
   energyMarginWh: number;
   raanRateDegDay: number;
+  elapsedOrbits: number;
+  cellCount: number;
+  activeCellAreaM2: number;
+  packagedAreaM2: number;
+  arrayVmpV: number;
+  arrayImpA: number;
+  arrayVscV: number;
+  arrayIscA: number;
+  bolArrayPowerW: number;
+  impliedCellEfficiencyPct: number;
+  radiationRetentionPct: number;
 }
 
 export interface AxisResult {
@@ -242,9 +261,9 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
       ? ssoRaanFromLtan(safeEpoch, mission.ltanHours)
       : ((mission.raanDeg % 360) + 360) % 360;
   const raan0 = effectiveRaanDeg * DEG;
-  const durationSec = periodSec * clamp(mission.durationOrbits, 1, 5);
+  const durationSec = clamp(mission.durationDays, 2, 30) * 86400;
   const desiredStep = clamp(mission.stepSec, 10, 600);
-  const sampleCount = Math.min(1200, Math.max(48, Math.ceil(durationSec / desiredStep)));
+  const sampleCount = Math.min(2400, Math.max(96, Math.ceil(durationSec / desiredStep)));
   const dt = durationSec / sampleCount;
   const points: SimulationPoint[] = [];
   const capacityWh = Math.max(0.1, power.batteryWh);
@@ -255,11 +274,27 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
   let peakPowerW = 0;
   let betaMinDeg = 90;
   let betaMaxDeg = -90;
-  const arrayFactor =
-    Math.max(0, power.activeAreaM2) *
-    clamp(power.efficiencyPct / 100, 0, 1) *
-    clamp(power.degradationPct / 100, 0, 1) *
+  const seriesCells = Math.max(1, Math.round(power.seriesCells));
+  const parallelStrings = Math.max(1, Math.round(power.parallelStrings));
+  const cellCount = seriesCells * parallelStrings;
+  const activeCellAreaM2 = cellCount * Math.max(0.01, power.cellAreaCm2) / 10000;
+  const packagingFactor = clamp(power.packagingEfficiencyPct / 100, 0.1, 1);
+  const packagedAreaM2 = activeCellAreaM2 / packagingFactor;
+  const bolArrayPowerW =
+    Math.max(0, power.vmpV) * Math.max(0, power.impA) * cellCount;
+  const radiationRetention = clamp(
+    1 - Math.max(0, power.fluenceE14Cm2) * Math.max(0, power.fluenceLossPctPerE14) / 100,
+    0,
+    1,
+  );
+  const eolFactor =
+    radiationRetention *
+    clamp(power.nonRadiationEolPct / 100, 0, 1) *
     clamp(1 - power.systemLossPct / 100, 0, 1);
+  const impliedCellEfficiencyPct =
+    activeCellAreaM2 > 0
+      ? (bolArrayPowerW / (SOLAR_CONSTANT_W_M2 * activeCellAreaM2)) * 100
+      : 0;
 
   for (let sample = 0; sample <= sampleCount; sample += 1) {
     const tSec = Math.min(sample * dt, durationSec);
@@ -282,8 +317,7 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
     const incidenceCosine = clamp(dot(panelNormal, sun), 0, 1);
     const incidenceDeg = Math.acos(incidenceCosine) * RAD;
     const shadowFactor = eclipseFactor(position, sun);
-    const generatedPowerW =
-      SOLAR_CONSTANT_W_M2 * arrayFactor * incidenceCosine * shadowFactor;
+    const generatedPowerW = bolArrayPowerW * eolFactor * incidenceCosine * shadowFactor;
 
     if (sample > 0) {
       energyWh += (generatedPowerW * dt) / 3600;
@@ -320,6 +354,7 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
   }
 
   const durationHours = durationSec / 3600;
+  const elapsedOrbits = durationSec / periodSec;
   const averagePowerW = energyWh / durationHours;
   const loadEnergyWh = Math.max(0, power.averageLoadW) * durationHours;
   return {
@@ -331,14 +366,25 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
       peakPowerW,
       averagePowerW,
       energyWh,
-      energyPerOrbitWh: energyWh / clamp(mission.durationOrbits, 1, 5),
-      eclipsePerOrbitSec: eclipseEquivalentSec / clamp(mission.durationOrbits, 1, 5),
+      energyPerOrbitWh: energyWh / elapsedOrbits,
+      eclipsePerOrbitSec: eclipseEquivalentSec / elapsedOrbits,
       betaMinDeg,
       betaMaxDeg,
       minSocPct,
       finalSocPct: (batteryWh / capacityWh) * 100,
       energyMarginWh: energyWh - loadEnergyWh,
       raanRateDegDay: raanRate * RAD * 86400,
+      elapsedOrbits,
+      cellCount,
+      activeCellAreaM2,
+      packagedAreaM2,
+      arrayVmpV: seriesCells * Math.max(0, power.vmpV),
+      arrayImpA: parallelStrings * Math.max(0, power.impA),
+      arrayVscV: seriesCells * Math.max(0, power.vscV),
+      arrayIscA: parallelStrings * Math.max(0, power.iscA),
+      bolArrayPowerW,
+      impliedCellEfficiencyPct,
+      radiationRetentionPct: radiationRetention * 100,
     } satisfies SimulationMetrics,
   };
 }
@@ -371,4 +417,3 @@ export function formatDuration(seconds: number) {
   }
   return `${Math.round(seconds / 60)} min`;
 }
-

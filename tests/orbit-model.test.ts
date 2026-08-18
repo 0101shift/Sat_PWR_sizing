@@ -39,15 +39,23 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
     raanDeg: 0,
     ltanHours: 10.5,
     epoch: "2026-08-18T00:00:00Z",
-    durationOrbits: 2,
-    stepSec: 45,
+    durationDays: 2,
+    stepSec: 60,
     attitude: "LVLH",
     deploymentAxis: "Y",
   };
   const power: PowerConfig = {
-    activeAreaM2: 2.4,
-    efficiencyPct: 30,
-    degradationPct: 80,
+    vmpV: 2.45,
+    impA: 0.52,
+    vscV: 2.75,
+    iscA: 0.56,
+    cellAreaCm2: 30.2,
+    seriesCells: 32,
+    parallelStrings: 16,
+    packagingEfficiencyPct: 88,
+    fluenceE14Cm2: 5,
+    fluenceLossPctPerE14: 0.8,
+    nonRadiationEolPct: 92,
     systemLossPct: 12,
     averageLoadW: 420,
     batteryWh: 520,
@@ -55,10 +63,18 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
   };
   const result = runSimulation(mission, power);
   assert.ok(result.points.length > 100);
+  assert.equal(result.metrics.durationSec, 2 * 86400);
   assert.ok(result.metrics.energyPerOrbitWh > 0);
-  assert.ok(result.metrics.peakPowerW <= 1361 * 2.4 * 0.3 * 0.8 * 0.88 + 1e-9);
+  const expectedBolPower = 2.45 * 0.52 * 32 * 16;
+  assert.equal(result.metrics.bolArrayPowerW, expectedBolPower);
+  assert.ok(result.metrics.peakPowerW <= expectedBolPower + 1e-9);
+  assert.ok(Math.abs(result.metrics.activeCellAreaM2 - (32 * 16 * 30.2) / 10000) < 1e-12);
+  assert.ok(Math.abs(result.metrics.packagedAreaM2 - result.metrics.activeCellAreaM2 / 0.88) < 1e-12);
+  assert.equal(result.metrics.arrayVmpV, 2.45 * 32);
+  assert.equal(result.metrics.arrayImpA, 0.52 * 16);
+  assert.equal(result.metrics.radiationRetentionPct, 96);
+  assert.equal(runSimulation({ ...mission, durationDays: 1 }, power).metrics.durationSec, 2 * 86400);
   assert.ok(result.points.every((point) => point.shadowFactor >= 0 && point.shadowFactor <= 1));
   assert.ok(result.points.every((point) => point.socPct >= 0 && point.socPct <= 100));
   assert.deepEqual([...result.axes.map((axis) => axis.rank)].sort(), [1, 2, 3]);
 });
-

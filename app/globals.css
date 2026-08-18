@@ -461,6 +461,54 @@ input[type="range"] {
   touch-action: none;
 }
 
+.orbit-stage {
+  width: 100%;
+  height: 100%;
+}
+
+.camera-controls {
+  position: absolute;
+  left: 16px;
+  top: 15px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(85, 140, 143, 0.38);
+  background: rgba(5, 15, 18, 0.82);
+  backdrop-filter: blur(8px);
+}
+
+.camera-controls button,
+.camera-controls span {
+  min-width: 31px;
+  height: 29px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #aac1c1;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+}
+
+.camera-controls button {
+  cursor: pointer;
+}
+
+.camera-controls button:hover,
+.camera-controls button.active {
+  border-color: #386b70;
+  background: #123034;
+  color: var(--teal);
+}
+
+.camera-controls span {
+  min-width: 40px;
+  color: var(--muted-2);
+}
+
 .canvas-readout {
   position: absolute;
   top: 15px;
@@ -476,14 +524,77 @@ input[type="range"] {
   backdrop-filter: blur(8px);
 }
 
-.sun-dot {
+.illumination-state i,
+.orbit-legend i {
   display: inline-block;
   width: 6px;
   height: 6px;
   margin-right: 4px;
   border-radius: 50%;
+}
+
+.state-sunlight i,
+.legend-sunlight {
+  background: var(--teal);
+  box-shadow: 0 0 8px rgba(81, 217, 212, 0.65);
+}
+
+.state-penumbra i,
+.legend-penumbra {
   background: var(--amber);
   box-shadow: 0 0 8px rgba(241, 180, 90, 0.65);
+}
+
+.state-umbra i,
+.legend-umbra {
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(239, 121, 94, 0.65);
+}
+
+.orbit-legend {
+  position: absolute;
+  left: 16px;
+  bottom: 14px;
+  display: flex;
+  gap: 12px;
+  padding: 7px 9px;
+  border: 1px solid rgba(85, 140, 143, 0.28);
+  background: rgba(5, 15, 18, 0.76);
+  color: #91abad;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+}
+
+.array-derived {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-top: 13px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.array-derived > div {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  background: #081317;
+}
+
+.array-derived span {
+  color: var(--muted-2);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.array-derived b {
+  color: #c3dcdb;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 550;
 }
 
 .timeline-control {
@@ -713,6 +824,7 @@ input[type="range"] {
   gap: 6px;
   padding: 13px 14px;
   border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .engineering-strip > div:last-child {
@@ -941,4 +1053,3 @@ input[type="range"] {
     break-inside: avoid;
   }
 }
-

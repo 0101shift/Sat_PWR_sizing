@@ -21,7 +21,11 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Preliminary solar array sizing/i);
   assert.match(html, /Sun–array geometry/i);
   assert.match(html, /Deployment axis/i);
+  assert.match(html, /Solar cell &amp; strings/i);
+  assert.match(html, /Packaging eff\./i);
+  assert.match(html, /Follow sat/i);
+  assert.match(html, /Penumbra/i);
+  assert.match(html, /Umbra/i);
   assert.match(html, /MODEL SCOPE/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
-

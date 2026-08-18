@@ -23,16 +23,24 @@ const DEFAULT_MISSION: MissionConfig = {
   raanDeg: 0,
   ltanHours: 10.5,
   epoch: "2026-08-18T00:00",
-  durationOrbits: 2,
-  stepSec: 45,
+  durationDays: 2,
+  stepSec: 60,
   attitude: "LVLH",
   deploymentAxis: "Y",
 };
 
 const DEFAULT_POWER: PowerConfig = {
-  activeAreaM2: 2.4,
-  efficiencyPct: 30,
-  degradationPct: 80,
+  vmpV: 2.45,
+  impA: 0.52,
+  vscV: 2.75,
+  iscA: 0.56,
+  cellAreaCm2: 30.2,
+  seriesCells: 32,
+  parallelStrings: 16,
+  packagingEfficiencyPct: 88,
+  fluenceE14Cm2: 5,
+  fluenceLossPctPerE14: 0.8,
+  nonRadiationEolPct: 92,
   systemLossPct: 12,
   averageLoadW: 420,
   batteryWh: 520,
@@ -130,19 +138,18 @@ function drawArrow(
   }
 }
 
-function OrbitCanvas({
-  points,
-  currentIndex,
-  mode,
-}: {
-  points: SimulationPoint[];
-  currentIndex: number;
-  mode: ViewMode;
-}) {
+function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]; currentIndex: number; mode: ViewMode }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const size = useCanvasSize(canvasRef);
   const [rotation, setRotation] = useState({ yaw: -0.55, pitch: 0.56 });
+  const [zoom, setZoom] = useState(1);
+  const [followSatellite, setFollowSatellite] = useState(false);
   const drag = useRef<{ x: number; y: number } | null>(null);
+
+  const fitView = () => {
+    setZoom(1);
+    setFollowSatellite(false);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -156,18 +163,17 @@ function OrbitCanvas({
     context.clearRect(0, 0, width, height);
 
     const background = context.createLinearGradient(0, 0, width, height);
-    background.addColorStop(0, "#061219");
-    background.addColorStop(0.58, "#08171c");
-    background.addColorStop(1, "#071014");
+    background.addColorStop(0, "#030a10");
+    background.addColorStop(0.58, "#07151b");
+    background.addColorStop(1, "#050b10");
     context.fillStyle = background;
     context.fillRect(0, 0, width, height);
-
-    for (let star = 0; star < 80; star += 1) {
-      const x = ((star * 67 + 29) % 997) / 997 * width;
-      const y = ((star * 149 + 71) % 991) / 991 * height;
-      const alpha = 0.12 + ((star * 17) % 50) / 100;
-      context.fillStyle = `rgba(204, 235, 238, ${alpha})`;
-      context.fillRect(x, y, star % 9 === 0 ? 1.5 : 1, star % 9 === 0 ? 1.5 : 1);
+    for (let star = 0; star < 110; star += 1) {
+      const x = (((star * 67 + 29) % 997) / 997) * width;
+      const y = (((star * 149 + 71) % 991) / 991) * height;
+      const alpha = 0.1 + ((star * 17) % 45) / 100;
+      context.fillStyle = `rgba(218, 238, 242, ${alpha})`;
+      context.fillRect(x, y, star % 13 === 0 ? 1.5 : 1, star % 13 === 0 ? 1.5 : 1);
     }
 
     const rotate = (vector: Vector3): Vector3 => {
@@ -177,8 +183,7 @@ function OrbitCanvas({
       const sp = Math.sin(rotation.pitch);
       const x = cy * vector[0] - sy * vector[1];
       const y = sy * vector[0] + cy * vector[1];
-      const z = vector[2];
-      return [x, cp * y - sp * z, sp * y + cp * z];
+      return [x, cp * y - sp * vector[2], sp * y + cp * vector[2]];
     };
 
     const current = points[clamp(currentIndex, 0, points.length - 1)];
@@ -186,111 +191,196 @@ function OrbitCanvas({
     if (mode === "ORBIT") {
       const maxRadius = Math.max(...points.map((point) => magnitude(point.positionKm)));
       const plotRadius = Math.min(width * 0.42, height * 0.43);
-      const plotScale = plotRadius / (maxRadius * 1.12);
-      const center: [number, number] = [width * 0.52, height * 0.52];
+      const plotScale = (plotRadius / (maxRadius * 1.12)) * zoom;
+      const center: [number, number] = [width * 0.51, height * 0.52];
+      const target = followSatellite ? current.positionKm : ([0, 0, 0] as Vector3);
       const project = (vector: Vector3): [number, number, number] => {
-        const transformed = rotate(vector);
-        return [
-          center[0] + transformed[0] * plotScale,
-          center[1] - transformed[1] * plotScale,
-          transformed[2],
-        ];
+        const transformed = rotate([
+          vector[0] - target[0],
+          vector[1] - target[1],
+          vector[2] - target[2],
+        ]);
+        return [center[0] + transformed[0] * plotScale, center[1] - transformed[1] * plotScale, transformed[2]];
       };
+      const earthCenter = project([0, 0, 0]);
+      const earthRadius = EARTH_RADIUS_KM * plotScale;
+      const sun2d = rotate(current.sunVector);
 
-      context.strokeStyle = "rgba(131, 179, 184, 0.12)";
-      context.lineWidth = 1;
-      for (let ring = 1; ring <= 3; ring += 1) {
-        context.beginPath();
-        context.arc(center[0], center[1], (plotRadius * ring) / 3, 0, Math.PI * 2);
-        context.stroke();
+      if (!followSatellite && zoom <= 2.25) {
+        context.strokeStyle = "rgba(131, 179, 184, 0.10)";
+        context.lineWidth = 1;
+        for (let ring = 1; ring <= 3; ring += 1) {
+          context.beginPath();
+          context.arc(earthCenter[0], earthCenter[1], (plotRadius * zoom * ring) / 3, 0, Math.PI * 2);
+          context.stroke();
+        }
       }
 
-      for (let index = 1; index < points.length; index += 1) {
-        const from = project(points[index - 1].positionKm);
-        const to = project(points[index].positionKm);
-        const light = (points[index - 1].shadowFactor + points[index].shadowFactor) / 2;
-        context.strokeStyle = light < 0.25 ? "rgba(245, 166, 78, 0.45)" : "rgba(87, 225, 226, 0.72)";
-        context.lineWidth = light < 0.25 ? 2 : 1.6;
+      // Projected umbra direction gives the orbit state colors physical context.
+      const shadowDirection = normalize([-sun2d[0], sun2d[1], 0]);
+      const perpendicular: [number, number] = [-shadowDirection[1], shadowDirection[0]];
+      const coneLength = Math.max(plotRadius * 1.65 * zoom, earthRadius * 2.4);
+      context.fillStyle = "rgba(2, 5, 9, 0.46)";
+      context.beginPath();
+      context.moveTo(earthCenter[0] + perpendicular[0] * earthRadius * 0.93, earthCenter[1] + perpendicular[1] * earthRadius * 0.93);
+      context.lineTo(earthCenter[0] + shadowDirection[0] * coneLength + perpendicular[0] * earthRadius * 0.42, earthCenter[1] + shadowDirection[1] * coneLength + perpendicular[1] * earthRadius * 0.42);
+      context.lineTo(earthCenter[0] + shadowDirection[0] * coneLength - perpendicular[0] * earthRadius * 0.42, earthCenter[1] + shadowDirection[1] * coneLength - perpendicular[1] * earthRadius * 0.42);
+      context.lineTo(earthCenter[0] - perpendicular[0] * earthRadius * 0.93, earthCenter[1] - perpendicular[1] * earthRadius * 0.93);
+      context.closePath();
+      context.fill();
+
+      const dt = points.length > 1 ? Math.max(1, points[1].tSec - points[0].tSec) : 60;
+      const radius = magnitude(current.positionKm);
+      const periodEstimate = 2 * Math.PI * Math.sqrt(radius ** 3 / 398600.4418);
+      const samplesPerOrbit = Math.max(12, Math.round(periodEstimate / dt));
+      const revolutionStart = Math.floor(currentIndex / samplesPerOrbit) * samplesPerOrbit;
+      const orbitPoints = points.slice(revolutionStart, Math.min(points.length, revolutionStart + samplesPerOrbit + 1));
+      const stateColor = (factor: number) => factor <= 0.02 ? "#ef6f58" : factor < 0.98 ? "#f2b45b" : "#54ddd8";
+
+      context.strokeStyle = "rgba(166, 205, 207, 0.12)";
+      context.lineWidth = 7;
+      context.beginPath();
+      orbitPoints.forEach((point, index) => {
+        const projected = project(point.positionKm);
+        if (index === 0) context.moveTo(projected[0], projected[1]);
+        else context.lineTo(projected[0], projected[1]);
+      });
+      context.stroke();
+
+      for (let index = 1; index < orbitPoints.length; index += 1) {
+        const from = project(orbitPoints[index - 1].positionKm);
+        const to = project(orbitPoints[index].positionKm);
+        const light = (orbitPoints[index - 1].shadowFactor + orbitPoints[index].shadowFactor) / 2;
+        context.strokeStyle = stateColor(light);
+        context.shadowColor = stateColor(light);
+        context.shadowBlur = light <= 0.02 ? 5 : 9;
+        context.lineWidth = light <= 0.02 ? 4.2 : light < 0.98 ? 3.6 : 2.6;
+        context.setLineDash(light <= 0.02 ? [7, 4] : []);
         context.beginPath();
         context.moveTo(from[0], from[1]);
         context.lineTo(to[0], to[1]);
         context.stroke();
       }
+      context.setLineDash([]);
+      context.shadowBlur = 0;
 
-      const earthRadius = EARTH_RADIUS_KM * plotScale;
-      const sun2d = rotate(current.sunVector);
-      const lightX = center[0] - sun2d[0] * earthRadius * 0.34;
-      const lightY = center[1] + sun2d[1] * earthRadius * 0.34;
-      const earthGradient = context.createRadialGradient(
-        lightX,
-        lightY,
-        earthRadius * 0.08,
-        center[0],
-        center[1],
-        earthRadius,
-      );
-      earthGradient.addColorStop(0, "#5bd4d1");
-      earthGradient.addColorStop(0.34, "#147c83");
-      earthGradient.addColorStop(0.72, "#0a3845");
-      earthGradient.addColorStop(1, "#041419");
-      context.fillStyle = earthGradient;
-      context.beginPath();
-      context.arc(center[0], center[1], earthRadius, 0, Math.PI * 2);
-      context.fill();
-      context.strokeStyle = "rgba(113, 225, 224, 0.38)";
-      context.lineWidth = 1;
-      context.stroke();
+      for (let index = 1; index < orbitPoints.length; index += 1) {
+        const previous = orbitPoints[index - 1].shadowFactor;
+        const next = orbitPoints[index].shadowFactor;
+        if ((previous >= 0.98 && next < 0.98) || (previous < 0.98 && next >= 0.98)) {
+          const marker = project(orbitPoints[index].positionKm);
+          context.fillStyle = next < 0.98 ? "#f2b45b" : "#54ddd8";
+          context.strokeStyle = "#071014";
+          context.lineWidth = 2;
+          context.beginPath();
+          context.arc(marker[0], marker[1], 4.2, 0, Math.PI * 2);
+          context.fill();
+          context.stroke();
+        }
+      }
+
+      // Engineering-realistic Earth: ocean, continent silhouettes, cloud bands and a Sun-driven terminator.
       context.save();
       context.beginPath();
-      context.arc(center[0], center[1], earthRadius, 0, Math.PI * 2);
+      context.arc(earthCenter[0], earthCenter[1], earthRadius, 0, Math.PI * 2);
       context.clip();
-      context.strokeStyle = "rgba(172, 236, 231, 0.12)";
-      for (let latitude = -2; latitude <= 2; latitude += 1) {
+      const ocean = context.createRadialGradient(
+        earthCenter[0] + sun2d[0] * earthRadius * 0.32,
+        earthCenter[1] - sun2d[1] * earthRadius * 0.32,
+        earthRadius * 0.05,
+        earthCenter[0],
+        earthCenter[1],
+        earthRadius,
+      );
+      ocean.addColorStop(0, "#2a91b3");
+      ocean.addColorStop(0.48, "#12617f");
+      ocean.addColorStop(0.82, "#092d45");
+      ocean.addColorStop(1, "#020b13");
+      context.fillStyle = ocean;
+      context.fillRect(earthCenter[0] - earthRadius, earthCenter[1] - earthRadius, earthRadius * 2, earthRadius * 2);
+
+      const continents = [
+        [[-0.72,-0.52],[-0.42,-0.66],[-0.18,-0.43],[-0.25,-0.17],[-0.07,0.05],[-0.2,0.29],[-0.38,0.18],[-0.51,-0.03],[-0.7,-0.14]],
+        [[-0.1,0.12],[0.18,-0.02],[0.32,0.13],[0.23,0.4],[0.08,0.72],[-0.12,0.51],[-0.23,0.25]],
+        [[0.05,-0.54],[0.39,-0.66],[0.73,-0.48],[0.68,-0.22],[0.43,-0.08],[0.28,0.12],[0.08,0.03],[-0.05,-0.19]],
+        [[0.54,0.43],[0.78,0.35],[0.83,0.55],[0.67,0.7],[0.49,0.59]],
+      ];
+      const earthRotation = ((current.tSec / 86164) * Math.PI * 2) % (Math.PI * 2);
+      context.fillStyle = "rgba(92, 133, 86, 0.92)";
+      continents.forEach((shape, shapeIndex) => {
         context.beginPath();
-        context.ellipse(
-          center[0],
-          center[1] + latitude * earthRadius * 0.28,
-          earthRadius * Math.sqrt(Math.max(0.1, 1 - (latitude * 0.25) ** 2)),
-          earthRadius * 0.12,
-          0,
-          0,
-          Math.PI * 2,
-        );
+        shape.forEach(([nx, ny], index) => {
+          const shiftedX = nx + Math.sin(earthRotation + shapeIndex) * 0.08;
+          const px = earthCenter[0] + shiftedX * earthRadius;
+          const py = earthCenter[1] + ny * earthRadius;
+          if (index === 0) context.moveTo(px, py); else context.lineTo(px, py);
+        });
+        context.closePath();
+        context.fill();
+      });
+      context.strokeStyle = "rgba(236, 248, 244, 0.22)";
+      context.lineWidth = Math.max(0.6, earthRadius * 0.012);
+      for (let cloud = -2; cloud <= 2; cloud += 1) {
+        context.beginPath();
+        context.ellipse(earthCenter[0] + cloud * earthRadius * 0.08, earthCenter[1] + cloud * earthRadius * 0.27, earthRadius * 0.72, earthRadius * 0.07, cloud * 0.12, 0.2, Math.PI * 1.55);
         context.stroke();
       }
+      const terminator = context.createLinearGradient(
+        earthCenter[0] + sun2d[0] * earthRadius,
+        earthCenter[1] - sun2d[1] * earthRadius,
+        earthCenter[0] - sun2d[0] * earthRadius,
+        earthCenter[1] + sun2d[1] * earthRadius,
+      );
+      terminator.addColorStop(0, "rgba(0, 0, 0, 0)");
+      terminator.addColorStop(0.48, "rgba(0, 2, 7, 0.18)");
+      terminator.addColorStop(0.65, "rgba(0, 3, 9, 0.66)");
+      terminator.addColorStop(1, "rgba(0, 2, 7, 0.9)");
+      context.fillStyle = terminator;
+      context.fillRect(earthCenter[0] - earthRadius, earthCenter[1] - earthRadius, earthRadius * 2, earthRadius * 2);
       context.restore();
+      context.strokeStyle = "rgba(96, 197, 226, 0.65)";
+      context.shadowColor = "rgba(57, 177, 226, 0.7)";
+      context.shadowBlur = Math.min(18, Math.max(4, earthRadius * 0.08));
+      context.lineWidth = Math.max(1, earthRadius * 0.018);
+      context.beginPath();
+      context.arc(earthCenter[0], earthCenter[1], earthRadius, 0, Math.PI * 2);
+      context.stroke();
+      context.shadowBlur = 0;
 
       const sunOrigin: [number, number] = [42, 56];
-      const sunTarget: [number, number] = [
-        sunOrigin[0] + sun2d[0] * 62,
-        sunOrigin[1] - sun2d[1] * 62,
-      ];
-      context.fillStyle = "rgba(246, 180, 81, 0.18)";
-      context.beginPath();
-      context.arc(sunOrigin[0], sunOrigin[1], 18, 0, Math.PI * 2);
-      context.fill();
-      drawArrow(context, sunOrigin, sunTarget, "#f7b957", "SUN");
+      drawArrow(context, sunOrigin, [sunOrigin[0] + sun2d[0] * 62, sunOrigin[1] - sun2d[1] * 62], "#f7b957", "SUN");
 
       const satellite = project(current.positionKm);
       const velocity = normalize(current.velocityKmS);
-      const velocityEnd = project(add(current.positionKm, scale(velocity, maxRadius * 0.22)));
-      context.fillStyle = current.shadowFactor < 0.2 ? "#f2a54d" : "#88ffff";
-      context.shadowColor = context.fillStyle;
-      context.shadowBlur = 16;
+      const velocityEnd = project(add(current.positionKm, scale(velocity, maxRadius * (followSatellite ? 0.035 : 0.19))));
+      const satColor = stateColor(current.shadowFactor);
+      const satSize = clamp(5.5 * Math.sqrt(zoom), 5.5, 14);
+      const velocityAngle = Math.atan2(velocityEnd[1] - satellite[1], velocityEnd[0] - satellite[0]);
+      context.save();
+      context.translate(satellite[0], satellite[1]);
+      context.rotate(velocityAngle);
+      context.fillStyle = "#bdcdd0";
+      context.fillRect(-satSize * 0.55, -satSize * 0.48, satSize * 1.1, satSize * 0.96);
+      context.fillStyle = "#267f99";
+      context.fillRect(-satSize * 2.2, -satSize * 0.25, satSize * 1.45, satSize * 0.5);
+      context.fillRect(satSize * 0.75, -satSize * 0.25, satSize * 1.45, satSize * 0.5);
+      context.strokeStyle = satColor;
+      context.lineWidth = 1.2;
+      context.strokeRect(-satSize * 2.2, -satSize * 0.25, satSize * 1.45, satSize * 0.5);
+      context.strokeRect(satSize * 0.75, -satSize * 0.25, satSize * 1.45, satSize * 0.5);
+      context.restore();
+      context.shadowColor = satColor;
+      context.shadowBlur = 18;
+      context.strokeStyle = satColor;
       context.beginPath();
-      context.arc(satellite[0], satellite[1], 5.5, 0, Math.PI * 2);
-      context.fill();
+      context.arc(satellite[0], satellite[1], satSize * 2.5, 0, Math.PI * 2);
+      context.stroke();
       context.shadowBlur = 0;
-      drawArrow(
-        context,
-        [satellite[0], satellite[1]],
-        [velocityEnd[0], velocityEnd[1]],
-        "#c8f0ee",
-        "V",
-      );
+      drawArrow(context, [satellite[0], satellite[1]], [velocityEnd[0], velocityEnd[1]], "#c8f0ee", "V");
+
       context.fillStyle = "rgba(217, 239, 237, 0.65)";
       context.font = "500 11px var(--font-geist-mono), monospace";
-      context.fillText("Drag to rotate", width - 106, height - 18);
+      context.fillText(`REV ${Math.floor(currentIndex / samplesPerOrbit) + 1} · ${followSatellite ? "SATELLITE FOLLOW" : `${Math.round(zoom * 100)}% VIEW`}`, 18, height - 18);
     } else {
       const center: [number, number] = [width * 0.5, height * 0.52];
       const bodyScale = Math.min(width, height) / 210;
@@ -374,30 +464,43 @@ function OrbitCanvas({
       context.fillText("Ideal single-axis tracking", 20, height - 18);
       context.fillText("Drag to rotate", width - 106, height - 18);
     }
-  }, [currentIndex, mode, points, rotation, size]);
+  }, [currentIndex, followSatellite, mode, points, rotation, size, zoom]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="space-canvas"
-      aria-label={mode === "ORBIT" ? "Interactive three-dimensional orbit view" : "Interactive spacecraft and solar-panel vector view"}
-      onPointerDown={(event) => {
-        drag.current = { x: event.clientX, y: event.clientY };
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={(event) => {
-        if (!drag.current) return;
-        const dx = event.clientX - drag.current.x;
-        const dy = event.clientY - drag.current.y;
-        drag.current = { x: event.clientX, y: event.clientY };
-        setRotation((value) => ({
-          yaw: value.yaw + dx * 0.008,
-          pitch: clamp(value.pitch + dy * 0.008, -1.35, 1.35),
-        }));
-      }}
-      onPointerUp={() => { drag.current = null; }}
-      onPointerCancel={() => { drag.current = null; }}
-    />
+    <div className="orbit-stage">
+      <canvas
+        ref={canvasRef}
+        className="space-canvas"
+        aria-label={mode === "ORBIT" ? "Interactive three-dimensional orbit view" : "Interactive spacecraft and solar-panel vector view"}
+        onWheel={(event) => {
+          if (mode !== "ORBIT") return;
+          event.preventDefault();
+          setZoom((value) => clamp(value * (event.deltaY > 0 ? 0.9 : 1.1), 0.65, 12));
+        }}
+        onPointerDown={(event) => {
+          drag.current = { x: event.clientX, y: event.clientY };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!drag.current) return;
+          const dx = event.clientX - drag.current.x;
+          const dy = event.clientY - drag.current.y;
+          drag.current = { x: event.clientX, y: event.clientY };
+          setRotation((value) => ({ yaw: value.yaw + dx * 0.008, pitch: clamp(value.pitch + dy * 0.008, -1.35, 1.35) }));
+        }}
+        onPointerUp={() => { drag.current = null; }}
+        onPointerCancel={() => { drag.current = null; }}
+      />
+      {mode === "ORBIT" && (
+        <div className="camera-controls" aria-label="Orbit camera controls">
+          <button type="button" onClick={() => setZoom((value) => clamp(value / 1.25, 0.65, 12))} aria-label="Zoom out">−</button>
+          <span>{zoom.toFixed(1)}x</span>
+          <button type="button" onClick={() => setZoom((value) => clamp(value * 1.25, 0.65, 12))} aria-label="Zoom in">+</button>
+          <button type="button" onClick={fitView}>Fit</button>
+          <button type="button" className={followSatellite ? "active" : ""} onClick={() => { setFollowSatellite((value) => !value); setZoom((value) => value < 5 ? 7 : value); }}>Follow sat</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -446,7 +549,13 @@ function PowerChart({ points, currentIndex }: { points: SimulationPoint[]; curre
       context.moveTo(xx, top);
       context.lineTo(xx, top + plotHeight);
       context.stroke();
-      context.fillText(`${Math.round((maxTime * column) / 240)}m`, xx - 10, height - 10);
+      const tickSeconds = (maxTime * column) / 4;
+      const tickLabel = maxTime >= 86400
+        ? `${(tickSeconds / 86400).toFixed(1)}d`
+        : maxTime >= 7200
+          ? `${(tickSeconds / 3600).toFixed(1)}h`
+          : `${Math.round(tickSeconds / 60)}m`;
+      context.fillText(tickLabel, xx - 10, height - 10);
     }
 
     const powerGradient = context.createLinearGradient(0, top, 0, top + plotHeight);
@@ -585,10 +694,11 @@ export default function SolarSizingDashboard() {
   const bestAxis = result.axes.find((axis) => axis.rank === 1) ?? result.axes[0];
   const selectedAxis = result.axes.find((axis) => axis.axis === mission.deploymentAxis) ?? result.axes[0];
   const maxAxisEnergy = Math.max(...result.axes.map((axis) => axis.energyPerOrbitWh), 1);
-
-  useEffect(() => {
-    setCurrentIndex(0);
-  }, [result]);
+  const illuminationState = current.shadowFactor <= 0.02
+    ? "Umbra"
+    : current.shadowFactor < 0.98
+      ? "Penumbra"
+      : "Sunlight";
 
   useEffect(() => {
     if (!playing) return;
@@ -599,13 +709,16 @@ export default function SolarSizingDashboard() {
   }, [playing, result.points.length]);
 
   const updateMission = <K extends keyof MissionConfig>(key: K, value: MissionConfig[K]) => {
+    setCurrentIndex(0);
     setMission((currentMission) => ({ ...currentMission, [key]: value }));
   };
   const updatePower = <K extends keyof PowerConfig>(key: K, value: PowerConfig[K]) => {
+    setCurrentIndex(0);
     setPower((currentPower) => ({ ...currentPower, [key]: value }));
   };
 
   const choosePreset = (preset: OrbitPreset) => {
+    setCurrentIndex(0);
     setMission((currentMission) => ({
       ...currentMission,
       preset,
@@ -618,12 +731,19 @@ export default function SolarSizingDashboard() {
   const exportCsv = () => {
     const header = [
       "time_s", "x_eci_km", "y_eci_km", "z_eci_km", "power_w", "soc_pct",
-      "beta_deg", "incidence_deg", "shadow_factor", "deployment_axis",
+      "beta_deg", "incidence_deg", "shadow_factor", "illumination_state", "deployment_axis",
+      "series_cells", "parallel_strings", "array_vmp_v", "array_imp_a",
+      "active_cell_area_m2", "packaged_area_m2", "fluence_1e14_cm2",
     ];
     const rows = result.points.map((point) => [
       point.tSec.toFixed(2), ...point.positionKm.map((value) => value.toFixed(5)),
       point.powerW.toFixed(3), point.socPct.toFixed(3), point.betaDeg.toFixed(4),
-      point.incidenceDeg.toFixed(4), point.shadowFactor.toFixed(5), mission.deploymentAxis,
+      point.incidenceDeg.toFixed(4), point.shadowFactor.toFixed(5),
+      point.shadowFactor <= 0.02 ? "UMBRA" : point.shadowFactor < 0.98 ? "PENUMBRA" : "SUNLIGHT",
+      mission.deploymentAxis, power.seriesCells, power.parallelStrings,
+      result.metrics.arrayVmpV.toFixed(3), result.metrics.arrayImpA.toFixed(3),
+      result.metrics.activeCellAreaM2.toFixed(4), result.metrics.packagedAreaM2.toFixed(4),
+      power.fluenceE14Cm2.toFixed(3),
     ]);
     const csv = [header, ...rows].map((row) => row.join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -694,7 +814,7 @@ export default function SolarSizingDashboard() {
               ) : (
                 <NumberField label="RAAN" value={mission.raanDeg} unit="deg" min={0} max={360} step={1} onChange={(value) => updateMission("raanDeg", value)} />
               )}
-              <NumberField label="Duration" value={mission.durationOrbits} unit="orbits" min={1} max={5} step={1} onChange={(value) => updateMission("durationOrbits", value)} />
+              <NumberField label="Duration" value={mission.durationDays} unit="days" min={2} max={30} step={0.5} onChange={(value) => updateMission("durationDays", value)} />
             </div>
             <label className="date-field">
               <span>Mission epoch</span>
@@ -729,24 +849,42 @@ export default function SolarSizingDashboard() {
                 ))}
               </div>
             </div>
+          </section>
+
+          <section className="control-section">
+            <div className="section-heading"><span>03</span><h2>Solar cell & strings</h2></div>
             <div className="field-grid">
-              <NumberField label="Active area" value={power.activeAreaM2} unit="m²" min={0.05} max={100} step={0.1} onChange={(value) => updatePower("activeAreaM2", value)} />
-              <NumberField label="Efficiency" value={power.efficiencyPct} unit="%" min={1} max={45} step={0.5} onChange={(value) => updatePower("efficiencyPct", value)} />
-              <NumberField label="EOL factor" value={power.degradationPct} unit="%" min={10} max={100} step={1} onChange={(value) => updatePower("degradationPct", value)} />
+              <NumberField label="Vmp / cell" value={power.vmpV} unit="V" min={0.01} max={10} step={0.01} onChange={(value) => updatePower("vmpV", value)} />
+              <NumberField label="Imp / cell" value={power.impA} unit="A" min={0.001} max={20} step={0.01} onChange={(value) => updatePower("impA", value)} />
+              <NumberField label="Vsc / Voc" value={power.vscV} unit="V" min={0.01} max={15} step={0.01} onChange={(value) => updatePower("vscV", value)} />
+              <NumberField label="Isc / cell" value={power.iscA} unit="A" min={0.001} max={25} step={0.01} onChange={(value) => updatePower("iscA", value)} />
+              <NumberField label="Cells / series" value={power.seriesCells} unit="cells" min={1} max={500} step={1} onChange={(value) => updatePower("seriesCells", value)} />
+              <NumberField label="Parallel strings" value={power.parallelStrings} unit="strings" min={1} max={500} step={1} onChange={(value) => updatePower("parallelStrings", value)} />
+              <NumberField label="Cell active area" value={power.cellAreaCm2} unit="cm²" min={0.1} max={2000} step={0.1} onChange={(value) => updatePower("cellAreaCm2", value)} />
+              <NumberField label="Packaging eff." value={power.packagingEfficiencyPct} unit="%" min={10} max={100} step={0.5} onChange={(value) => updatePower("packagingEfficiencyPct", value)} />
+              <NumberField label="Fluence" value={power.fluenceE14Cm2} unit="1e14/cm²" min={0} max={1000} step={0.1} onChange={(value) => updatePower("fluenceE14Cm2", value)} />
+              <NumberField label="Loss / fluence" value={power.fluenceLossPctPerE14} unit="%/1e14" min={0} max={20} step={0.1} onChange={(value) => updatePower("fluenceLossPctPerE14", value)} />
+              <NumberField label="Other EOL factor" value={power.nonRadiationEolPct} unit="%" min={10} max={100} step={1} onChange={(value) => updatePower("nonRadiationEolPct", value)} />
               <NumberField label="System loss" value={power.systemLossPct} unit="%" min={0} max={60} step={1} onChange={(value) => updatePower("systemLossPct", value)} />
+            </div>
+            <div className="array-derived" aria-label="Derived solar array properties">
+              <div><span>Array at MPP</span><b>{result.metrics.arrayVmpV.toFixed(1)} V / {result.metrics.arrayImpA.toFixed(1)} A</b></div>
+              <div><span>Vsc / Isc</span><b>{result.metrics.arrayVscV.toFixed(1)} V / {result.metrics.arrayIscA.toFixed(1)} A</b></div>
+              <div><span>Active cell area</span><b>{result.metrics.activeCellAreaM2.toFixed(2)} m²</b></div>
+              <div><span>Packaged area</span><b>{result.metrics.packagedAreaM2.toFixed(2)} m²</b></div>
             </div>
           </section>
 
           <section className="control-section">
-            <div className="section-heading"><span>03</span><h2>Power balance</h2></div>
+            <div className="section-heading"><span>04</span><h2>Power balance</h2></div>
             <div className="field-grid">
               <NumberField label="Average load" value={power.averageLoadW} unit="W" min={0} max={10000} step={10} onChange={(value) => updatePower("averageLoadW", value)} />
               <NumberField label="Battery" value={power.batteryWh} unit="Wh" min={1} max={10000} step={10} onChange={(value) => updatePower("batteryWh", value)} />
             </div>
-            <label className="range-field">
+            <div className="range-field">
               <span><b>Initial state of charge</b><em>{power.initialSocPct}%</em></span>
-              <input type="range" min="10" max="100" step="1" value={power.initialSocPct} onChange={(event) => updatePower("initialSocPct", Number(event.target.value))} />
-            </label>
+              <input aria-label="Initial state of charge" id="initial-soc" type="range" min="10" max="100" step="1" value={power.initialSocPct} onChange={(event) => updatePower("initialSocPct", Number(event.target.value))} />
+            </div>
           </section>
         </aside>
 
@@ -768,10 +906,17 @@ export default function SolarSizingDashboard() {
             <div className="canvas-wrap">
               <OrbitCanvas points={result.points} currentIndex={currentIndex} mode={viewMode} />
               <div className="canvas-readout">
-                <span><i className="sun-dot" /> Sunlit {Math.round(current.shadowFactor * 100)}%</span>
+                <span className={`illumination-state state-${illuminationState.toLowerCase()}`}><i /> {illuminationState} {Math.round(current.shadowFactor * 100)}%</span>
                 <span>β {current.betaDeg.toFixed(1)}°</span>
                 <span>θ {current.incidenceDeg.toFixed(1)}°</span>
               </div>
+              {viewMode === "ORBIT" && (
+                <div className="orbit-legend" aria-label="Orbit illumination legend">
+                  <span><i className="legend-sunlight" />Sunlight</span>
+                  <span><i className="legend-penumbra" />Penumbra</span>
+                  <span><i className="legend-umbra" />Umbra</span>
+                </div>
+              )}
             </div>
             <div className="timeline-control">
               <button type="button" className="play-button" aria-label={playing ? "Pause simulation" : "Play simulation"} onClick={() => setPlaying((value) => !value)}>
@@ -836,6 +981,11 @@ export default function SolarSizingDashboard() {
             <div><span>Beta range</span><b>{result.metrics.betaMinDeg.toFixed(1)}° to {result.metrics.betaMaxDeg.toFixed(1)}°</b></div>
             <div><span>Energy margin</span><b className={marginPositive ? "positive" : "negative"}>{result.metrics.energyMarginWh >= 0 ? "+" : ""}{result.metrics.energyMarginWh.toFixed(0)} Wh</b></div>
             <div><span>Peak array power</span><b>{result.metrics.peakPowerW.toFixed(0)} W</b></div>
+            <div><span>BOL array rating</span><b>{result.metrics.bolArrayPowerW.toFixed(0)} W</b></div>
+            <div><span>Cell / packaged area</span><b>{result.metrics.activeCellAreaM2.toFixed(2)} / {result.metrics.packagedAreaM2.toFixed(2)} m²</b></div>
+            <div><span>Implied cell efficiency</span><b>{result.metrics.impliedCellEfficiencyPct.toFixed(1)}%</b></div>
+            <div><span>Radiation retention</span><b>{result.metrics.radiationRetentionPct.toFixed(1)}%</b></div>
+            <div><span>Analysis span</span><b>{mission.durationDays.toFixed(1)} d / {result.metrics.elapsedOrbits.toFixed(1)} orbits</b></div>
           </section>
 
           {(!marginPositive || !batteryHealthy) && (
@@ -849,8 +999,10 @@ export default function SolarSizingDashboard() {
             <span>MODEL SCOPE</span>
             <p>
               Preliminary design only. Circular two-body propagation with secular J2 RAAN drift, analytical Sun position,
-              spherical-Earth conical eclipse and ideal single-axis solar tracking. Thermal coupling, self-shadowing,
-              eccentricity, detailed electrical strings and radiation environment are intentionally excluded from this MVP.
+              spherical-Earth conical eclipse and ideal single-axis solar tracking. Array output uses the entered cell
+              Vmp/Imp and series-parallel topology, with separate packaging, radiation-retention, other EOL and system-loss factors.
+              The Earth rendering is visual context only. Thermal coupling, self-shadowing, temperature-dependent I-V behavior,
+              MPPT operating limits, detailed radiation spectra and eccentric orbits remain outside this preliminary model.
             </p>
           </footer>
         </section>

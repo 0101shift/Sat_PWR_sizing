@@ -22,7 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
     .split(",")[0]
     .trim();
   const origin = `${protocol}://${host}`;
-  const imageUrl = new URL("/og.png", origin).toString();
+  const imageUrl = new URL("/og-v2.png", origin).toString();
   const title = "Orbit·PWR — Satellite Solar Array Sizing";
   const description =
     "Interactive preliminary solar-array sizing for circular LEO, SSO, and GEO satellite missions.";
