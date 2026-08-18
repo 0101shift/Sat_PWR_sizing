@@ -42,7 +42,15 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
     durationDays: 2,
     stepSec: 60,
     attitude: "LVLH",
-    deploymentAxis: "Y",
+    panelFacingAxis: "+Z",
+    panelHingeAxis: "+Y",
+    velocityBodyAxis: "+X",
+    nadirBodyAxis: "+Z",
+    panelRotationXDeg: 0,
+    panelRotationYDeg: 0,
+    panelRotationZDeg: 0,
+    panelControlMode: "SUN_TRACK",
+    wingLayout: "DUAL",
   };
   const power: PowerConfig = {
     vmpV: 2.45,
@@ -76,5 +84,19 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
   assert.equal(runSimulation({ ...mission, durationDays: 1 }, power).metrics.durationSec, 2 * 86400);
   assert.ok(result.points.every((point) => point.shadowFactor >= 0 && point.shadowFactor <= 1));
   assert.ok(result.points.every((point) => point.socPct >= 0 && point.socPct <= 100));
-  assert.deepEqual([...result.axes.map((axis) => axis.rank)].sort(), [1, 2, 3]);
+  assert.deepEqual([...result.axes.map((axis) => axis.rank)].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+  assert.ok(result.points.every((point) => point.trackerAngleDeg >= -180 && point.trackerAngleDeg <= 180));
+
+  const remapped = runSimulation({
+    ...mission,
+    velocityBodyAxis: "-Y",
+    nadirBodyAxis: "+X",
+    panelFacingAxis: "+X",
+    panelControlMode: "FIXED",
+    panelRotationZDeg: 90,
+  }, power);
+  const initial = remapped.points[0];
+  assert.ok(Math.abs(initial.bodyVelocity[0]) < 1e-9 && Math.abs(initial.bodyVelocity[1] + 1) < 1e-9);
+  assert.ok(Math.abs(initial.bodyNadir[0] - 1) < 1e-9 && Math.abs(initial.bodyNadir[1]) < 1e-9);
+  assert.ok(Math.abs(initial.panelNormalBody[0]) < 1e-9 && Math.abs(initial.panelNormalBody[1] - 1) < 1e-9);
 });

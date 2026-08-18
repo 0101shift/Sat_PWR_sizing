@@ -283,6 +283,7 @@ select:focus-visible {
 .number-field,
 .date-field,
 .select-field,
+.signed-axis-field,
 .range-field {
   display: grid;
   gap: 6px;
@@ -333,7 +334,8 @@ select:focus-visible {
 }
 
 .date-field input,
-.select-field select {
+.select-field select,
+.signed-axis-field select {
   width: 100%;
   min-height: 36px;
   padding: 8px 9px;
@@ -342,6 +344,59 @@ select:focus-visible {
   background: var(--field);
   color: var(--ink);
   font-size: 11px;
+}
+
+.axis-input-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.control-label {
+  margin: 14px 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.control-note {
+  margin: 7px 0 0;
+  color: var(--muted-2);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.orientation-heading {
+  display: grid;
+  gap: 3px;
+  margin: 16px 0 9px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.orientation-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.orientation-heading em {
+  color: var(--muted-2);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.orientation-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.inline-warning {
+  margin: 9px 0 0;
+  padding: 8px 9px;
+  border-left: 2px solid var(--amber);
+  background: rgba(241, 180, 90, 0.07);
+  color: #c7aa7b;
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .axis-control {
@@ -458,8 +513,10 @@ input[type="range"] {
   display: block;
   width: 100%;
   height: 100%;
-  touch-action: none;
 }
+
+.space-canvas { touch-action: pan-y; }
+.power-chart { touch-action: none; }
 
 .orbit-stage {
   width: 100%;
@@ -468,8 +525,8 @@ input[type="range"] {
 
 .camera-controls {
   position: absolute;
-  left: 16px;
-  top: 15px;
+  right: 16px;
+  top: 56px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -480,7 +537,8 @@ input[type="range"] {
 }
 
 .camera-controls button,
-.camera-controls span {
+.camera-controls span,
+.camera-controls em {
   min-width: 31px;
   height: 29px;
   display: inline-grid;
@@ -507,6 +565,13 @@ input[type="range"] {
 .camera-controls span {
   min-width: 40px;
   color: var(--muted-2);
+}
+
+.camera-controls em {
+  width: auto;
+  color: #587477;
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .canvas-readout {
@@ -973,6 +1038,21 @@ input[type="range"] {
     left: 10px;
     right: 10px;
     justify-content: space-between;
+  }
+
+  .camera-controls {
+    left: 10px;
+    right: 10px;
+    top: 55px;
+    justify-content: flex-end;
+  }
+
+  .camera-controls em {
+    display: none;
+  }
+
+  .orientation-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .timeline-control {

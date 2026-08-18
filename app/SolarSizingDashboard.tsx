@@ -6,12 +6,14 @@ import {
   formatDuration,
   runSimulation,
   type AttitudeMode,
-  type Axis,
   type MissionConfig,
   type OrbitPreset,
+  type PanelControlMode,
   type PowerConfig,
+  type SignedAxis,
   type SimulationPoint,
   type Vector3,
+  type WingLayout,
 } from "./lib/orbit-model";
 
 type ViewMode = "ORBIT" | "SPACECRAFT";
@@ -26,7 +28,15 @@ const DEFAULT_MISSION: MissionConfig = {
   durationDays: 2,
   stepSec: 60,
   attitude: "LVLH",
-  deploymentAxis: "Y",
+  panelFacingAxis: "+Z",
+  panelHingeAxis: "+Y",
+  velocityBodyAxis: "+X",
+  nadirBodyAxis: "+Z",
+  panelRotationXDeg: 0,
+  panelRotationYDeg: 0,
+  panelRotationZDeg: 0,
+  panelControlMode: "SUN_TRACK",
+  wingLayout: "DUAL",
 };
 
 const DEFAULT_POWER: PowerConfig = {
@@ -58,6 +68,8 @@ const ATTITUDE_LABELS: Record<AttitudeMode, string> = {
   SUN_POINTING: "Sun pointing",
   INERTIAL: "Inertial fixed",
 };
+
+const SIGNED_AXES: SignedAxis[] = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -138,7 +150,17 @@ function drawArrow(
   }
 }
 
-function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]; currentIndex: number; mode: ViewMode }) {
+function OrbitCanvas({
+  points,
+  currentIndex,
+  mode,
+  mission,
+}: {
+  points: SimulationPoint[];
+  currentIndex: number;
+  mode: ViewMode;
+  mission: MissionConfig;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const size = useCanvasSize(canvasRef);
   const [rotation, setRotation] = useState({ yaw: -0.55, pitch: 0.56 });
@@ -392,6 +414,12 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
           transformed[2],
         ];
       };
+      const horizon = context.createRadialGradient(center[0], height * 1.18, height * 0.12, center[0], height * 1.18, height * 0.82);
+      horizon.addColorStop(0, "rgba(40, 145, 190, 0.28)");
+      horizon.addColorStop(0.56, "rgba(12, 68, 96, 0.09)");
+      horizon.addColorStop(1, "rgba(2, 8, 13, 0)");
+      context.fillStyle = horizon;
+      context.fillRect(0, 0, width, height);
       const busVertices: Vector3[] = [
         [-24, -18, -16], [24, -18, -16], [24, 18, -16], [-24, 18, -16],
         [-24, -18, 16], [24, -18, 16], [24, 18, 16], [-24, 18, 16],
@@ -406,8 +434,12 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
 
       faces.forEach((face, faceIndex) => {
         const projected = face.indices.map((index) => project(busVertices[index]));
-        context.fillStyle = faceIndex % 2 ? "#244249" : "#1a3339";
-        context.strokeStyle = "rgba(154, 211, 210, 0.55)";
+        const faceGradient = context.createLinearGradient(projected[0][0], projected[0][1], projected[2][0], projected[2][1]);
+        faceGradient.addColorStop(0, faceIndex % 2 ? "#4b514b" : "#26383e");
+        faceGradient.addColorStop(0.48, faceIndex % 2 ? "#8b7852" : "#40545a");
+        faceGradient.addColorStop(1, "#17262c");
+        context.fillStyle = faceGradient;
+        context.strokeStyle = "rgba(193, 224, 220, 0.62)";
         context.lineWidth = 1;
         context.beginPath();
         projected.forEach((point, index) => {
@@ -419,19 +451,44 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
         context.stroke();
       });
 
+      const busEdges: Array<[number, number]> = [[0, 6], [1, 7], [3, 5], [2, 4]];
+      context.strokeStyle = "rgba(235, 185, 94, 0.48)";
+      context.lineWidth = 0.8;
+      busEdges.forEach(([fromIndex, toIndex]) => {
+        const from = project(busVertices[fromIndex]);
+        const to = project(busVertices[toIndex]);
+        context.beginPath();
+        context.moveTo(from[0], from[1]);
+        context.lineTo(to[0], to[1]);
+        context.stroke();
+      });
+
       const hinge = normalize(current.hingeBody);
       const normal = normalize(current.panelNormalBody, [0, 0, 1]);
       const span = normalize(cross(hinge, normal), [1, 0, 0]);
-      [-1, 1].forEach((side) => {
+      const wingSides = mission.wingLayout === "DUAL" ? [-1, 1] : [1];
+      wingSides.forEach((side) => {
         const centerPanel = scale(span, side * 60);
+        const boomStart = project(scale(span, side * 25));
+        const boomEnd = project(scale(span, side * 30));
+        context.strokeStyle = "#c0c9c8";
+        context.lineWidth = 3;
+        context.beginPath();
+        context.moveTo(boomStart[0], boomStart[1]);
+        context.lineTo(boomEnd[0], boomEnd[1]);
+        context.stroke();
         const corners = [
           add(add(centerPanel, scale(span, -32)), scale(hinge, -18)),
           add(add(centerPanel, scale(span, 32)), scale(hinge, -18)),
           add(add(centerPanel, scale(span, 32)), scale(hinge, 18)),
           add(add(centerPanel, scale(span, -32)), scale(hinge, 18)),
         ].map(project);
-        context.fillStyle = "rgba(20, 113, 132, 0.88)";
-        context.strokeStyle = "#63d7d6";
+        const panelGradient = context.createLinearGradient(corners[0][0], corners[0][1], corners[2][0], corners[2][1]);
+        panelGradient.addColorStop(0, "rgba(20, 73, 117, 0.96)");
+        panelGradient.addColorStop(0.52, "rgba(27, 120, 148, 0.96)");
+        panelGradient.addColorStop(1, "rgba(10, 51, 91, 0.98)");
+        context.fillStyle = panelGradient;
+        context.strokeStyle = "#75deda";
         context.lineWidth = 1.3;
         context.beginPath();
         corners.forEach((point, index) => {
@@ -441,14 +498,47 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
         context.closePath();
         context.fill();
         context.stroke();
-        const centerLineFrom = project(add(centerPanel, scale(span, -32)));
-        const centerLineTo = project(add(centerPanel, scale(span, 32)));
-        context.strokeStyle = "rgba(177, 235, 232, 0.35)";
-        context.beginPath();
-        context.moveTo(centerLineFrom[0], centerLineFrom[1]);
-        context.lineTo(centerLineTo[0], centerLineTo[1]);
-        context.stroke();
+        context.strokeStyle = "rgba(195, 238, 235, 0.32)";
+        context.lineWidth = 0.65;
+        for (let column = 1; column < 8; column += 1) {
+          const ratio = column / 8;
+          const topX = corners[0][0] + (corners[1][0] - corners[0][0]) * ratio;
+          const topY = corners[0][1] + (corners[1][1] - corners[0][1]) * ratio;
+          const bottomX = corners[3][0] + (corners[2][0] - corners[3][0]) * ratio;
+          const bottomY = corners[3][1] + (corners[2][1] - corners[3][1]) * ratio;
+          context.beginPath();
+          context.moveTo(topX, topY);
+          context.lineTo(bottomX, bottomY);
+          context.stroke();
+        }
+        for (let row = 1; row < 3; row += 1) {
+          const ratio = row / 3;
+          const leftX = corners[0][0] + (corners[3][0] - corners[0][0]) * ratio;
+          const leftY = corners[0][1] + (corners[3][1] - corners[0][1]) * ratio;
+          const rightX = corners[1][0] + (corners[2][0] - corners[1][0]) * ratio;
+          const rightY = corners[1][1] + (corners[2][1] - corners[1][1]) * ratio;
+          context.beginPath();
+          context.moveTo(leftX, leftY);
+          context.lineTo(rightX, rightY);
+          context.stroke();
+        }
       });
+
+      const mastBase = project([0, 0, 16]);
+      const mastTop = project([0, 0, 34]);
+      context.strokeStyle = "#d5dbd7";
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(mastBase[0], mastBase[1]);
+      context.lineTo(mastTop[0], mastTop[1]);
+      context.stroke();
+      context.fillStyle = "#c9d3d1";
+      context.strokeStyle = "#70888a";
+      context.lineWidth = 1;
+      context.beginPath();
+      context.ellipse(mastTop[0], mastTop[1], 12 * bodyScale / 2.4, 5 * bodyScale / 2.4, rotation.yaw * 0.35, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
 
       const origin = project([0, 0, 0]);
       const vectorArrow = (vector: Vector3, length: number, color: string, label: string) => {
@@ -457,14 +547,18 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
       };
       vectorArrow(current.bodySun, 86, "#f7b957", "SUN");
       vectorArrow(current.bodyVelocity, 72, "#d3efed", "V");
+      vectorArrow(current.bodyNadir, 68, "#6ca9ff", "NADIR");
       vectorArrow(current.hingeBody, 62, "#9d7cf7", "HINGE");
-      vectorArrow(current.panelNormalBody, 57, "#58e1dd", "N");
+      vectorArrow(current.panelNormalBody, 57, "#58e1dd", "PANEL N");
+      vectorArrow([1, 0, 0], 43, "#ef795e", "+X");
+      vectorArrow([0, 1, 0], 43, "#51d9d4", "+Y");
+      vectorArrow([0, 0, 1], 43, "#a28af8", "+Z");
       context.fillStyle = "rgba(217, 239, 237, 0.65)";
       context.font = "500 11px var(--font-geist-mono), monospace";
-      context.fillText("Ideal single-axis tracking", 20, height - 18);
+      context.fillText(`${mission.panelControlMode === "SUN_TRACK" ? `TRACK ${current.trackerAngleDeg.toFixed(1)}°` : "FIXED PANEL"} · ${mission.wingLayout} WING`, 20, height - 18);
       context.fillText("Drag to rotate", width - 106, height - 18);
     }
-  }, [currentIndex, followSatellite, mode, points, rotation, size, zoom]);
+  }, [currentIndex, followSatellite, mission, mode, points, rotation, size, zoom]);
 
   return (
     <div className="orbit-stage">
@@ -473,7 +567,7 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
         className="space-canvas"
         aria-label={mode === "ORBIT" ? "Interactive three-dimensional orbit view" : "Interactive spacecraft and solar-panel vector view"}
         onWheel={(event) => {
-          if (mode !== "ORBIT") return;
+          if (mode !== "ORBIT" || (!event.ctrlKey && !event.metaKey)) return;
           event.preventDefault();
           setZoom((value) => clamp(value * (event.deltaY > 0 ? 0.9 : 1.1), 0.65, 12));
         }}
@@ -498,6 +592,7 @@ function OrbitCanvas({ points, currentIndex, mode }: { points: SimulationPoint[]
           <button type="button" onClick={() => setZoom((value) => clamp(value * 1.25, 0.65, 12))} aria-label="Zoom in">+</button>
           <button type="button" onClick={fitView}>Fit</button>
           <button type="button" className={followSatellite ? "active" : ""} onClick={() => { setFollowSatellite((value) => !value); setZoom((value) => value < 5 ? 7 : value); }}>Follow sat</button>
+          <em>Ctrl + wheel</em>
         </div>
       )}
     </div>
@@ -643,6 +738,25 @@ function NumberField({
   );
 }
 
+function SignedAxisField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: SignedAxis;
+  onChange: (value: SignedAxis) => void;
+}) {
+  return (
+    <label className="signed-axis-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value as SignedAxis)}>
+        {SIGNED_AXES.map((axis) => <option key={axis} value={axis}>{axis}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "warn" | "good" }) {
   return (
     <article className={`metric${tone ? ` metric-${tone}` : ""}`}>
@@ -692,13 +806,14 @@ export default function SolarSizingDashboard() {
   const result = useMemo(() => runSimulation(mission, power), [mission, power]);
   const current = result.points[clamp(currentIndex, 0, result.points.length - 1)];
   const bestAxis = result.axes.find((axis) => axis.rank === 1) ?? result.axes[0];
-  const selectedAxis = result.axes.find((axis) => axis.axis === mission.deploymentAxis) ?? result.axes[0];
+  const selectedAxis = result.axes.find((axis) => axis.axis === mission.panelFacingAxis) ?? result.axes[0];
   const maxAxisEnergy = Math.max(...result.axes.map((axis) => axis.energyPerOrbitWh), 1);
   const illuminationState = current.shadowFactor <= 0.02
     ? "Umbra"
     : current.shadowFactor < 0.98
       ? "Penumbra"
       : "Sunlight";
+  const frameAxesValid = mission.velocityBodyAxis.slice(-1) !== mission.nadirBodyAxis.slice(-1);
 
   useEffect(() => {
     if (!playing) return;
@@ -731,7 +846,9 @@ export default function SolarSizingDashboard() {
   const exportCsv = () => {
     const header = [
       "time_s", "x_eci_km", "y_eci_km", "z_eci_km", "power_w", "soc_pct",
-      "beta_deg", "incidence_deg", "shadow_factor", "illumination_state", "deployment_axis",
+      "beta_deg", "incidence_deg", "shadow_factor", "illumination_state", "panel_facing_axis",
+      "panel_hinge_axis", "velocity_body_axis", "nadir_body_axis", "panel_rotation_x_deg",
+      "panel_rotation_y_deg", "panel_rotation_z_deg", "tracker_angle_deg", "panel_control_mode", "wing_layout",
       "series_cells", "parallel_strings", "array_vmp_v", "array_imp_a",
       "active_cell_area_m2", "packaged_area_m2", "fluence_1e14_cm2",
     ];
@@ -740,7 +857,10 @@ export default function SolarSizingDashboard() {
       point.powerW.toFixed(3), point.socPct.toFixed(3), point.betaDeg.toFixed(4),
       point.incidenceDeg.toFixed(4), point.shadowFactor.toFixed(5),
       point.shadowFactor <= 0.02 ? "UMBRA" : point.shadowFactor < 0.98 ? "PENUMBRA" : "SUNLIGHT",
-      mission.deploymentAxis, power.seriesCells, power.parallelStrings,
+      mission.panelFacingAxis, mission.panelHingeAxis, mission.velocityBodyAxis, mission.nadirBodyAxis,
+      mission.panelRotationXDeg, mission.panelRotationYDeg, mission.panelRotationZDeg,
+      point.trackerAngleDeg.toFixed(3), mission.panelControlMode, mission.wingLayout,
+      power.seriesCells, power.parallelStrings,
       result.metrics.arrayVmpV.toFixed(3), result.metrics.arrayImpA.toFixed(3),
       result.metrics.activeCellAreaM2.toFixed(4), result.metrics.packagedAreaM2.toFixed(4),
       power.fluenceE14Cm2.toFixed(3),
@@ -749,7 +869,7 @@ export default function SolarSizingDashboard() {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `orbit-pwr-${mission.preset.toLowerCase()}-${mission.deploymentAxis.toLowerCase()}-axis.csv`;
+    anchor.download = `orbit-pwr-${mission.preset.toLowerCase()}-${mission.panelFacingAxis.replace("+", "plus-").replace("-", "minus-").toLowerCase()}facing.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -832,22 +952,35 @@ export default function SolarSizingDashboard() {
                 ))}
               </select>
             </label>
-            <div className="axis-control">
-              <span>Panel hinge axis</span>
-              <div role="group" aria-label="Panel deployment axis">
-                {(["X", "Y", "Z"] as Axis[]).map((axis) => (
-                  <button
-                    type="button"
-                    key={axis}
-                    className={mission.deploymentAxis === axis ? "active" : ""}
-                    aria-pressed={mission.deploymentAxis === axis}
-                    onClick={() => updateMission("deploymentAxis", axis)}
-                  >
-                    <i className={`axis-dot axis-${axis.toLowerCase()}`} />
-                    {axis}
-                  </button>
-                ))}
-              </div>
+            <div className="axis-input-grid">
+              <SignedAxisField label="Velocity body axis" value={mission.velocityBodyAxis} onChange={(value) => updateMission("velocityBodyAxis", value)} />
+              <SignedAxisField label={mission.attitude === "SUN_POINTING" ? "Sun-pointing body axis" : mission.attitude === "INERTIAL" ? "Inertial reference axis" : "Nadir body axis"} value={mission.nadirBodyAxis} onChange={(value) => updateMission("nadirBodyAxis", value)} />
+              <SignedAxisField label="Panel facing axis" value={mission.panelFacingAxis} onChange={(value) => updateMission("panelFacingAxis", value)} />
+              <SignedAxisField label="Panel hinge axis" value={mission.panelHingeAxis} onChange={(value) => updateMission("panelHingeAxis", value)} />
+            </div>
+            {!frameAxesValid && <p className="inline-warning">Velocity and nadir/pointing axes must use different body axes. The model falls back to +X / +Z until corrected.</p>}
+            <div className="control-label">Panel control</div>
+            <Segmented<PanelControlMode>
+              value={mission.panelControlMode}
+              options={["SUN_TRACK", "FIXED"]}
+              labels={{ SUN_TRACK: "Sun track", FIXED: "Fixed" }}
+              onChange={(value) => updateMission("panelControlMode", value)}
+              ariaLabel="Panel control mode"
+            />
+            <div className="control-label">Wing layout</div>
+            <Segmented<WingLayout>
+              value={mission.wingLayout}
+              options={["SINGLE", "DUAL"]}
+              labels={{ SINGLE: "Single wing", DUAL: "Dual wing" }}
+              onChange={(value) => updateMission("wingLayout", value)}
+              ariaLabel="Solar array wing layout"
+            />
+            <p className="control-note">Wing layout changes the spacecraft packaging view; total configured cell count and electrical area remain unchanged.</p>
+            <div className="orientation-heading"><span>Panel mounting orientation</span><em>Body-frame Euler rotations</em></div>
+            <div className="field-grid orientation-grid">
+              <NumberField label="Rotate X" value={mission.panelRotationXDeg} unit="deg" min={-180} max={180} step={1} onChange={(value) => updateMission("panelRotationXDeg", value)} />
+              <NumberField label="Rotate Y" value={mission.panelRotationYDeg} unit="deg" min={-180} max={180} step={1} onChange={(value) => updateMission("panelRotationYDeg", value)} />
+              <NumberField label="Rotate Z" value={mission.panelRotationZDeg} unit="deg" min={-180} max={180} step={1} onChange={(value) => updateMission("panelRotationZDeg", value)} />
             </div>
           </section>
 
@@ -904,11 +1037,12 @@ export default function SolarSizingDashboard() {
               />
             </div>
             <div className="canvas-wrap">
-              <OrbitCanvas points={result.points} currentIndex={currentIndex} mode={viewMode} />
+              <OrbitCanvas points={result.points} currentIndex={currentIndex} mode={viewMode} mission={mission} />
               <div className="canvas-readout">
                 <span className={`illumination-state state-${illuminationState.toLowerCase()}`}><i /> {illuminationState} {Math.round(current.shadowFactor * 100)}%</span>
                 <span>β {current.betaDeg.toFixed(1)}°</span>
                 <span>θ {current.incidenceDeg.toFixed(1)}°</span>
+                {viewMode === "SPACECRAFT" && <span>Track {current.trackerAngleDeg.toFixed(1)}°</span>}
               </div>
               {viewMode === "ORBIT" && (
                 <div className="orbit-legend" aria-label="Orbit illumination legend">
@@ -953,12 +1087,12 @@ export default function SolarSizingDashboard() {
 
             <article className="axis-card">
               <div className="card-heading">
-                <div><span className="eyebrow">DESIGN SWEEP</span><h2>Deployment axis</h2></div>
-                <span className="recommended-tag">Best: {bestAxis.axis}-axis</span>
+                <div><span className="eyebrow">DESIGN SWEEP</span><h2>Panel facing axis</h2></div>
+                <span className="recommended-tag">Best: {bestAxis.axis}</span>
               </div>
               <div className="axis-bars">
                 {[...result.axes].sort((a, b) => a.axis.localeCompare(b.axis)).map((axis) => (
-                  <button type="button" key={axis.axis} onClick={() => updateMission("deploymentAxis", axis.axis)} className={mission.deploymentAxis === axis.axis ? "selected" : ""}>
+                  <button type="button" key={axis.axis} onClick={() => updateMission("panelFacingAxis", axis.axis)} className={mission.panelFacingAxis === axis.axis ? "selected" : ""}>
                     <span className="bar-label"><b>{axis.axis}</b><em>#{axis.rank}</em></span>
                     <span className="bar-track"><i style={{ width: `${((axis.energyPerOrbitWh / maxAxisEnergy) * 100).toFixed(3)}%` }} /></span>
                     <span className="bar-value"><b>{axis.energyPerOrbitWh.toFixed(0)} Wh</b><em>{axis.averagePowerW.toFixed(0)} W avg</em></span>
@@ -968,8 +1102,8 @@ export default function SolarSizingDashboard() {
               <div className="axis-verdict">
                 <span className="verdict-icon">↗</span>
                 <p>
-                  <b>{bestAxis.axis}-axis produces {((bestAxis.energyPerOrbitWh / selectedAxis.energyPerOrbitWh - 1) * 100).toFixed(1)}% more energy</b>
-                  <span>than the selected {mission.deploymentAxis}-axis for this mission and attitude.</span>
+                  <b>{bestAxis.axis} facing produces {((bestAxis.energyPerOrbitWh / Math.max(selectedAxis.energyPerOrbitWh, 0.001) - 1) * 100).toFixed(1)}% more energy</b>
+                  <span>than the selected {mission.panelFacingAxis} facing direction for this mission and attitude.</span>
                 </p>
               </div>
             </article>
@@ -999,7 +1133,9 @@ export default function SolarSizingDashboard() {
             <span>MODEL SCOPE</span>
             <p>
               Preliminary design only. Circular two-body propagation with secular J2 RAAN drift, analytical Sun position,
-              spherical-Earth conical eclipse and ideal single-axis solar tracking. Array output uses the entered cell
+              spherical-Earth conical eclipse and selectable fixed or ideal single-axis solar tracking. Signed body-axis
+              assignments map velocity and nadir/pointing references into the spacecraft frame; panel mounting rotations are
+              applied sequentially about body X, then Y, then Z. Array output uses the entered cell
               Vmp/Imp and series-parallel topology, with separate packaging, radiation-retention, other EOL and system-loss factors.
               The Earth rendering is visual context only. Thermal coupling, self-shadowing, temperature-dependent I-V behavior,
               MPPT operating limits, detailed radiation spectra and eccentric orbits remain outside this preliminary model.

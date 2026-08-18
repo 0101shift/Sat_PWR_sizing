@@ -20,7 +20,11 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Orbit·PWR — Satellite Solar Array Sizing/i);
   assert.match(html, /Preliminary solar array sizing/i);
   assert.match(html, /Sun–array geometry/i);
-  assert.match(html, /Deployment axis/i);
+  assert.match(html, /Panel facing axis/i);
+  assert.match(html, /Panel hinge axis/i);
+  assert.match(html, /Velocity body axis/i);
+  assert.match(html, /Nadir body axis/i);
+  assert.match(html, /Single wing/i);
   assert.match(html, /Solar cell &amp; strings/i);
   assert.match(html, /Packaging eff\./i);
   assert.match(html, /Follow sat/i);

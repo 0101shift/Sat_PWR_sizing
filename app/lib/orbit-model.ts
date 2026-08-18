@@ -1,7 +1,10 @@
 export type Vector3 = [number, number, number];
 export type OrbitPreset = "LEO" | "SSO" | "GEO";
 export type Axis = "X" | "Y" | "Z";
+export type SignedAxis = "+X" | "-X" | "+Y" | "-Y" | "+Z" | "-Z";
 export type AttitudeMode = "LVLH" | "SUN_POINTING" | "INERTIAL";
+export type PanelControlMode = "SUN_TRACK" | "FIXED";
+export type WingLayout = "SINGLE" | "DUAL";
 
 export interface MissionConfig {
   preset: OrbitPreset;
@@ -13,7 +16,15 @@ export interface MissionConfig {
   durationDays: number;
   stepSec: number;
   attitude: AttitudeMode;
-  deploymentAxis: Axis;
+  panelFacingAxis: SignedAxis;
+  panelHingeAxis: SignedAxis;
+  velocityBodyAxis: SignedAxis;
+  nadirBodyAxis: SignedAxis;
+  panelRotationXDeg: number;
+  panelRotationYDeg: number;
+  panelRotationZDeg: number;
+  panelControlMode: PanelControlMode;
+  wingLayout: WingLayout;
 }
 
 export interface PowerConfig {
@@ -41,10 +52,12 @@ export interface SimulationPoint {
   sunVector: Vector3;
   bodySun: Vector3;
   bodyVelocity: Vector3;
+  bodyNadir: Vector3;
   hingeAxis: Vector3;
   hingeBody: Vector3;
   panelNormal: Vector3;
   panelNormalBody: Vector3;
+  trackerAngleDeg: number;
   betaDeg: number;
   incidenceDeg: number;
   shadowFactor: number;
@@ -80,7 +93,7 @@ export interface SimulationMetrics {
 }
 
 export interface AxisResult {
-  axis: Axis;
+  axis: SignedAxis;
   energyPerOrbitWh: number;
   averagePowerW: number;
   minSocPct: number;
@@ -131,6 +144,10 @@ function normalize(a: Vector3, fallback: Vector3 = [1, 0, 0]): Vector3 {
 
 function scale(a: Vector3, amount: number): Vector3 {
   return [a[0] * amount, a[1] * amount, a[2] * amount];
+}
+
+function add(a: Vector3, b: Vector3): Vector3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 }
 
 function subtract(a: Vector3, b: Vector3): Vector3 {
@@ -195,41 +212,107 @@ function orbitState(
   return { position, velocity };
 }
 
+function signedAxisParts(axis: SignedAxis) {
+  return {
+    index: axis.endsWith("X") ? 0 : axis.endsWith("Y") ? 1 : 2,
+    sign: axis.startsWith("-") ? -1 : 1,
+  };
+}
+
+function signedAxisVector(axis: SignedAxis): Vector3 {
+  const { index, sign } = signedAxisParts(axis);
+  const vector: Vector3 = [0, 0, 0];
+  vector[index] = sign;
+  return vector;
+}
+
+function mappedBodyFrame(
+  velocityDirection: Vector3,
+  pointingDirection: Vector3,
+  velocityBodyAxis: SignedAxis,
+  pointingBodyAxis: SignedAxis,
+) {
+  const velocityParts = signedAxisParts(velocityBodyAxis);
+  const pointingParts = signedAxisParts(pointingBodyAxis);
+  const safeVelocityAxis = velocityParts.index === pointingParts.index ? signedAxisParts("+X") : velocityParts;
+  const safePointingAxis = velocityParts.index === pointingParts.index ? signedAxisParts("+Z") : pointingParts;
+  const first = normalize(velocityDirection);
+  const second = normalize(
+    subtract(pointingDirection, scale(first, dot(pointingDirection, first))),
+    normalize(cross([0, 0, 1], first), [0, 1, 0]),
+  );
+  const basis: Array<Vector3 | undefined> = [undefined, undefined, undefined];
+  basis[safeVelocityAxis.index] = scale(first, safeVelocityAxis.sign);
+  basis[safePointingAxis.index] = scale(second, safePointingAxis.sign);
+  if (!basis[2]) basis[2] = normalize(cross(basis[0]!, basis[1]!));
+  if (!basis[1]) basis[1] = normalize(cross(basis[2]!, basis[0]!));
+  if (!basis[0]) basis[0] = normalize(cross(basis[1]!, basis[2]!));
+  return { x: basis[0]!, y: basis[1]!, z: basis[2]! };
+}
+
 function bodyFrame(
-  attitude: AttitudeMode,
+  mission: MissionConfig,
   position: Vector3,
   velocity: Vector3,
   sun: Vector3,
 ) {
-  if (attitude === "INERTIAL") {
-    return { x: [1, 0, 0] as Vector3, y: [0, 1, 0] as Vector3, z: [0, 0, 1] as Vector3 };
+  const nadir = normalize(scale(position, -1));
+  if (mission.attitude === "INERTIAL") {
+    return mappedBodyFrame([1, 0, 0], [0, 0, 1], mission.velocityBodyAxis, mission.nadirBodyAxis);
   }
-
-  if (attitude === "SUN_POINTING") {
-    const z = sun;
-    const projectedVelocity = subtract(velocity, scale(z, dot(velocity, z)));
-    const x = normalize(projectedVelocity, normalize(cross([0, 0, 1], z), [1, 0, 0]));
-    const y = normalize(cross(z, x), [0, 1, 0]);
-    return { x: normalize(cross(y, z), x), y, z };
-  }
-
-  const z = normalize(scale(position, -1));
-  const projectedVelocity = subtract(velocity, scale(z, dot(velocity, z)));
-  const x = normalize(projectedVelocity);
-  const y = normalize(cross(z, x), [0, 1, 0]);
-  return { x: normalize(cross(y, z), x), y, z };
+  const pointing = mission.attitude === "SUN_POINTING" ? sun : nadir;
+  const projectedVelocity = normalize(
+    subtract(velocity, scale(pointing, dot(velocity, pointing))),
+    normalize(cross([0, 0, 1], pointing), [1, 0, 0]),
+  );
+  return mappedBodyFrame(
+    projectedVelocity,
+    pointing,
+    mission.velocityBodyAxis,
+    mission.nadirBodyAxis,
+  );
 }
 
 function bodyComponents(vector: Vector3, frame: ReturnType<typeof bodyFrame>): Vector3 {
   return [dot(vector, frame.x), dot(vector, frame.y), dot(vector, frame.z)];
 }
 
-function axisVector(axis: Axis, frame: ReturnType<typeof bodyFrame>) {
-  return axis === "X" ? frame.x : axis === "Y" ? frame.y : frame.z;
+function bodyToInertial(vector: Vector3, frame: ReturnType<typeof bodyFrame>): Vector3 {
+  return [
+    frame.x[0] * vector[0] + frame.y[0] * vector[1] + frame.z[0] * vector[2],
+    frame.x[1] * vector[0] + frame.y[1] * vector[1] + frame.z[1] * vector[2],
+    frame.x[2] * vector[0] + frame.y[2] * vector[1] + frame.z[2] * vector[2],
+  ];
 }
 
-function axisBody(axis: Axis): Vector3 {
-  return axis === "X" ? [1, 0, 0] : axis === "Y" ? [0, 1, 0] : [0, 0, 1];
+function rotateAround(vector: Vector3, axis: Vector3, angleRad: number): Vector3 {
+  const unitAxis = normalize(axis);
+  const cosine = Math.cos(angleRad);
+  const sine = Math.sin(angleRad);
+  return add(
+    add(scale(vector, cosine), scale(cross(unitAxis, vector), sine)),
+    scale(unitAxis, dot(unitAxis, vector) * (1 - cosine)),
+  );
+}
+
+function mountedPanelNormal(mission: MissionConfig, facingAxis: SignedAxis): Vector3 {
+  let normal = signedAxisVector(facingAxis);
+  normal = rotateAround(normal, [1, 0, 0], mission.panelRotationXDeg * DEG);
+  normal = rotateAround(normal, [0, 1, 0], mission.panelRotationYDeg * DEG);
+  normal = rotateAround(normal, [0, 0, 1], mission.panelRotationZDeg * DEG);
+  return normalize(normal);
+}
+
+function trackSunAboutHinge(baseNormal: Vector3, hinge: Vector3, sun: Vector3) {
+  const unitHinge = normalize(hinge);
+  const parallel = scale(unitHinge, dot(baseNormal, unitHinge));
+  const perpendicular = subtract(baseNormal, parallel);
+  if (magnitude(perpendicular) < 1e-9) {
+    return { normal: baseNormal, angleDeg: 0 };
+  }
+  const tangent = cross(unitHinge, perpendicular);
+  const angle = Math.atan2(dot(sun, tangent), dot(sun, perpendicular));
+  return { normal: normalize(rotateAround(baseNormal, unitHinge, angle)), angleDeg: angle * RAD };
 }
 
 /** Fraction of the apparent solar disc visible using a linear penumbra transition. */
@@ -245,7 +328,7 @@ export function eclipseFactor(positionKm: Vector3, sun: Vector3) {
   return clamp((separation - fullUmbraLimit) / (2 * SUN_ANGULAR_RADIUS_RAD), 0, 1);
 }
 
-function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
+function simulateAxis(mission: MissionConfig, power: PowerConfig, facingAxis: SignedAxis) {
   const epoch = new Date(mission.epoch);
   const safeEpoch = Number.isNaN(epoch.getTime()) ? new Date("2026-01-01T00:00:00Z") : epoch;
   const altitudeKm = mission.preset === "GEO" ? 35786 : clamp(mission.altitudeKm, 160, 50000);
@@ -310,10 +393,15 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
     );
     const orbitNormal = normalize(cross(position, velocity), [0, 0, 1]);
     const betaDeg = Math.asin(clamp(dot(orbitNormal, sun), -1, 1)) * RAD;
-    const frame = bodyFrame(mission.attitude, position, velocity, sun);
-    const hinge = normalize(axisVector(axis, frame));
-    const projectedSun = subtract(sun, scale(hinge, dot(sun, hinge)));
-    const panelNormal = normalize(projectedSun, normalize(cross(hinge, orbitNormal)));
+    const frame = bodyFrame(mission, position, velocity, sun);
+    const hingeBody = signedAxisVector(mission.panelHingeAxis);
+    const hinge = normalize(bodyToInertial(hingeBody, frame));
+    const baseNormalBody = mountedPanelNormal(mission, facingAxis);
+    const basePanelNormal = normalize(bodyToInertial(baseNormalBody, frame));
+    const tracking = mission.panelControlMode === "SUN_TRACK"
+      ? trackSunAboutHinge(basePanelNormal, hinge, sun)
+      : { normal: basePanelNormal, angleDeg: 0 };
+    const panelNormal = tracking.normal;
     const incidenceCosine = clamp(dot(panelNormal, sun), 0, 1);
     const incidenceDeg = Math.acos(incidenceCosine) * RAD;
     const shadowFactor = eclipseFactor(position, sun);
@@ -341,10 +429,12 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
       sunVector: sun,
       bodySun: bodyComponents(sun, frame),
       bodyVelocity: bodyComponents(normalize(velocity), frame),
+      bodyNadir: bodyComponents(normalize(scale(position, -1)), frame),
       hingeAxis: hinge,
-      hingeBody: axisBody(axis),
+      hingeBody,
       panelNormal,
       panelNormalBody: bodyComponents(panelNormal, frame),
+      trackerAngleDeg: tracking.angleDeg,
       betaDeg,
       incidenceDeg,
       shadowFactor,
@@ -390,9 +480,9 @@ function simulateAxis(mission: MissionConfig, power: PowerConfig, axis: Axis) {
 }
 
 export function runSimulation(mission: MissionConfig, power: PowerConfig): SimulationResult {
-  const selected = simulateAxis(mission, power, mission.deploymentAxis);
-  const comparisons = (["X", "Y", "Z"] as Axis[]).map((axis) => {
-    const result = axis === mission.deploymentAxis ? selected : simulateAxis(mission, power, axis);
+  const selected = simulateAxis(mission, power, mission.panelFacingAxis);
+  const comparisons = (["+X", "-X", "+Y", "-Y", "+Z", "-Z"] as SignedAxis[]).map((axis) => {
+    const result = axis === mission.panelFacingAxis ? selected : simulateAxis(mission, power, axis);
     return {
       axis,
       energyPerOrbitWh: result.metrics.energyPerOrbitWh,
