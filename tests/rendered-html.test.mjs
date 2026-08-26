@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-async function render() {
+async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -20,16 +20,152 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Orbit·PWR — Satellite Solar Array Sizing/i);
   assert.match(html, /Preliminary solar array sizing/i);
   assert.match(html, /Sun–array geometry/i);
-  assert.match(html, /Panel facing axis/i);
-  assert.match(html, /Panel hinge axis/i);
-  assert.match(html, /Velocity body axis/i);
-  assert.match(html, /Nadir body axis/i);
-  assert.match(html, /Single wing/i);
-  assert.match(html, /Solar cell &amp; strings/i);
-  assert.match(html, /Packaging eff\./i);
-  assert.match(html, /Follow sat/i);
+  assert.match(html, /Mission simulation/i);
+  assert.match(html, /Satellite configuration/i);
+  assert.match(html, /layout-cockpit/i);
+  assert.doesNotMatch(html, /FIXED ENGINEERING STAGE/i);
+  assert.match(html, /Orbit view/i);
+  assert.match(html, /Power \+ operations/i);
+  assert.match(html, /Archived layout/i);
+  assert.match(html, /EO Atlas 600/i);
+  assert.match(html, /Deployed spacecraft/i);
+  assert.doesNotMatch(html, /Edit configuration/i);
+  assert.match(html, /Deploy to orbit/i);
+  assert.doesNotMatch(html, /Save &amp; deploy to orbit/i);
+  assert.doesNotMatch(html, /Spacecraft view/i);
+  assert.match(html, /Panel facing/i);
+  assert.doesNotMatch(html, /Hinge-axis face/i);
+  assert.match(html, /Actual data replay/i);
+  assert.match(html, /Upload DIL file/i);
+  assert.match(html, /Download template/i);
+  assert.match(html, /SATELLITE_POSITION/i);
+  assert.match(html, /SOLAR_POWER_GENERATED/i);
+  assert.match(html, /DIL reference panel axis/i);
+  assert.match(html, /SOLAR_PANEL_AXIS/i);
+  assert.match(html, /SUN_PANEL_INCIDENCE/i);
+  assert.match(html, /Playback speed: 1×, 5×, 10×, 25×, 50×/i);
+  assert.match(html, /beginning with GSPOINTING activate the blue payload-boresight downlink beam/i);
+  assert.doesNotMatch(html, /DIL energy/i);
+  assert.match(html, /Pan/i);
+  assert.doesNotMatch(html, /Attitude &amp; array/i);
+  assert.doesNotMatch(html, /Solar cell &amp; strings/i);
+  assert.doesNotMatch(html, /Standard cell.*CIC/i);
+  assert.match(html, /Deployed spacecraft/i);
+  assert.match(html, /Body frame/i);
+  assert.doesNotMatch(html, /Edit spacecraft &amp; solar power model/i);
+  assert.match(html, /Spacecraft geometry, body frames and the solar power model/i);
+  assert.match(html, /Dual side/i);
+  assert.match(html, /Altitude/i);
+  assert.match(html, /Eccentricity/i);
+  assert.match(html, /Argument of perigee/i);
+  assert.match(html, /True anomaly at epoch/i);
+  assert.match(html, /AZUR 4G32-Advanced 4x8/i);
+  assert.match(html, /Packaging efficiency/i);
+  assert.match(html, /Operating temperature/i);
+  assert.match(html, /EOL fluence data point/i);
+  assert.match(html, /AM0 irradiance @ 1 AU/i);
+  assert.match(html, /Pmp temperature coefficient/i);
+  assert.match(html, /Pointing uncertainty/i);
+  assert.match(html, /Angular-response exponent/i);
+  assert.match(html, /MPPT efficiency/i);
+  assert.match(html, /Harness efficiency/i);
+  assert.match(html, /Mismatch loss/i);
+  assert.match(html, /Blocking-diode loss/i);
+  assert.match(html, /Contamination loss/i);
+  assert.match(html, /Self-shadowed area/i);
+  assert.match(html, /Other system loss/i);
+  assert.match(html, /Generated energy \/ span/i);
+  assert.match(html, /Perigee \/ apogee/i);
+  assert.match(html, /Reset view/i);
+  assert.doesNotMatch(html, /Sat POV/i);
+  assert.match(html, /Orbit follow/i);
+  assert.match(html, /3D rotate/i);
+  assert.match(html, /Orbit radius/i);
   assert.match(html, /Penumbra/i);
   assert.match(html, /Umbra/i);
+  assert.match(html, /NASA Blue Marble/i);
+  assert.doesNotMatch(html, /GROUND TRACK/i);
+  assert.doesNotMatch(html, /SUN–PANEL INCIDENCE/i);
+  assert.match(html, /EARTH \/ ORBIT VIEW-LOCKED/i);
+  assert.match(html, /locked orbit scene/i);
   assert.match(html, /MODEL SCOPE/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
+});
+
+test("server-renders the archived dashboard layout independently", async () => {
+  const response = await render("/legacy");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  const html = await response.text();
+  assert.match(html, /Archived Dashboard Layout/i);
+  assert.match(html, /layout-legacy/i);
+  assert.match(html, /Current layout/i);
+  assert.match(html, /Mission simulation/i);
+  assert.match(html, /Sun–array geometry/i);
+  assert.match(html, /Upload DIL file/i);
+});
+
+test("server-renders the standalone local EO satellite inventory", async () => {
+  const response = await render("/satellite-inventory");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  const html = await response.text();
+  assert.match(html, /EO Satellite Inventory/i);
+  assert.match(html, /LOCAL PROTOTYPE · NOT CONNECTED TO SIMULATOR/i);
+  assert.match(html, /EO Scout 12U/i);
+  assert.match(html, /EO Meridian 150/i);
+  assert.match(html, /EO Atlas 600/i);
+  assert.match(html, /Replay deployment/i);
+  assert.match(html, /Panel facing/i);
+  assert.match(html, /ASSIGNED VECTORS/i);
+  assert.match(html, /VELOCITY/i);
+  assert.match(html, /NADIR/i);
+  assert.match(html, /MISSION CONTEXT/i);
+  assert.match(html, /ACTUAL VELOCITY/i);
+  assert.match(html, /ACTUAL NADIR \/ EARTH/i);
+  assert.match(html, /ACTUAL SUN VECTOR/i);
+  assert.match(html, /READ ONLY/i);
+  assert.match(html, /Solar power model/i);
+  assert.doesNotMatch(html, /Physical model/i);
+  assert.doesNotMatch(html, /Reset trials/i);
+  assert.doesNotMatch(html, /REFERENCE ORBIT/i);
+  assert.doesNotMatch(html, />Altitude</i);
+  assert.doesNotMatch(html, />Inclination</i);
+  assert.doesNotMatch(html, />LTAN</i);
+  assert.doesNotMatch(html, />Average load</i);
+  assert.doesNotMatch(html, />Battery</i);
+  assert.doesNotMatch(html, /Mission epoch/i);
+  assert.match(html, /STEP workflow · phase 2/i);
+  assert.match(html, /Save locally/i);
+  assert.match(html, /Export JSON/i);
+  assert.match(html, /Delete satellite/i);
+});
+
+test("server-renders the isolated satellite axis integration lab", async () => {
+  const response = await render("/satellite-integration-lab");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  const html = await response.text();
+  assert.match(html, /Satellite Axis Integration Lab/i);
+  assert.match(html, /ISOLATED · FINAL SIMULATOR UNCHANGED/i);
+  assert.match(html, /Circular LVLH test/i);
+  assert.match(html, /Velocity body axis/i);
+  assert.match(html, /Nadir body axis/i);
+  assert.match(html, /VELOCITY ALIGNMENT ERROR/i);
+  assert.match(html, /NADIR ALIGNMENT ERROR/i);
+  assert.match(html, /PANEL–SUN INCIDENCE/i);
+  assert.match(html, /No attitude behavior has been merged into the final simulator/i);
+});
+
+test("server-renders the isolated full-screen dashboard layout lab", async () => {
+  const response = await render("/layout-lab");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /LAYOUT LAB · ISOLATED PROTOTYPE/i);
+  assert.match(html, /Only this setup rail scrolls/i);
+  assert.match(html, /Add custom part/i);
+  assert.match(html, /mass, power and thermal specifications are intentionally omitted/i);
+  assert.match(html, /Fixed engineering stage/i);
+  assert.match(html, /aria-label="Engineering view"/i);
+  assert.match(html, />Power \+ operations</i);
 });

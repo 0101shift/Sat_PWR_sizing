@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /.pnpm-store/
+/pnpm-lock.yaml
 /.pnp
 .pnp.*
 .yarn/*
