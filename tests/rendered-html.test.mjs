@@ -44,7 +44,8 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /SOLAR_PANEL_AXIS/i);
   assert.match(html, /SUN_PANEL_INCIDENCE/i);
   assert.match(html, /Playback speed: 1×, 5×, 10×, 25×, 50×/i);
-  assert.match(html, /beginning with GSPOINTING activate the blue payload-boresight downlink beam/i);
+  assert.match(html, /beginning with GSPOINTING activate a blue downlink beam from the installed X\/Ka-band communication dish/i);
+  assert.match(html, /ATTITUDE_RPY rotates the complete spacecraft assembly/i);
   assert.doesNotMatch(html, /DIL energy/i);
   assert.match(html, /Pan/i);
   assert.doesNotMatch(html, /Attitude &amp; array/i);

@@ -31,6 +31,7 @@ import {
   type ParsedDilData,
 } from "./lib/dil-data";
 import { serializeCsv, UTF8_CSV_BOM } from "./lib/csv-export";
+import { inventorySatelliteModelSpanM, operationBeamSourceBody } from "./lib/satellite-three";
 
 type ViewMode = "ORBIT" | "SPACECRAFT";
 type DashboardTab = "SIMULATION" | "SATELLITE_CONFIGURATION";
@@ -978,6 +979,26 @@ function OrbitCanvas({
         // a proper right-handed body basis instead of reflecting the model.
         ? [dot(vector, cameraRight), dot(vector, cameraVertical), -dot(vector, cameraDepth)]
         : rotate(vector);
+      const modelPixelsPerMeter = atlasDeployed && orbitSpacecraft
+        ? (satSize * 6.2) / Math.max(
+            inventorySatelliteModelSpanM(orbitSpacecraft, mission.wingLayout === "DUAL" ? "dual" : "single"),
+            0.1,
+          )
+        : 0;
+      const spacecraftBodyPointToScreen = (pointBody: Vector3): [number, number] => {
+        if (!atlasDeployed || !orbitSpacecraft) return [satellite[0], satellite[1]];
+        const cameraOffset = add(
+          add(
+            scale(cameraBasisVector(current.bodyXAxis), pointBody[0]),
+            scale(cameraBasisVector(current.bodyYAxis), pointBody[1]),
+          ),
+          scale(cameraBasisVector(current.bodyZAxis), pointBody[2]),
+        );
+        return [
+          satellite[0] + cameraOffset[0] * modelPixelsPerMeter,
+          satellite[1] - cameraOffset[1] * modelPixelsPerMeter,
+        ];
+      };
       orbitSatellite3dRef.current?.updatePose({
         x: satellite[0],
         y: satellite[1],
@@ -988,7 +1009,6 @@ function OrbitCanvas({
         bodyXAxis: cameraBasisVector(current.bodyXAxis),
         bodyYAxis: cameraBasisVector(current.bodyYAxis),
         bodyZAxis: cameraBasisVector(current.bodyZAxis),
-        payloadBoresightBody: current.payloadBoresightBody,
         sunDirection: cameraBasisVector(lockedSunVector),
         sunlightFactor: current.shadowFactor,
       });
@@ -1124,17 +1144,21 @@ function OrbitCanvas({
           context.closePath();
           context.fill();
         } else if (visual === "IMAGING" || visual === "GEOPOINTING") {
+          const beamSourceBody = orbitSpacecraft
+            ? operationBeamSourceBody(orbitSpacecraft, visual)
+            : ([0, 0, 0] satisfies Vector3);
+          const beamSource = spacecraftBodyPointToScreen(beamSourceBody);
           const payloadTargetWorld = rayEarthIntersection(current.positionKm, current.payloadBoresight)
             ?? add(current.positionKm, scale(normalize(current.payloadBoresight), maxRadius * 0.45));
           const payloadTarget = project(payloadTargetWorld);
           const target: [number, number] = [payloadTarget[0], payloadTarget[1]];
           const imaging = visual === "IMAGING";
-          const payloadDirection2d = normalize([target[0] - satellite[0], target[1] - satellite[1], 0], toEarth2d);
+          const payloadDirection2d = normalize([target[0] - beamSource[0], target[1] - beamSource[1], 0], toEarth2d);
           const perpendicular2d: Vector3 = [-payloadDirection2d[1], payloadDirection2d[0], 0];
           const beamHalfWidth = imaging ? 14 : 9;
           context.fillStyle = imaging ? "rgba(74, 222, 139, 0.13)" : "rgba(75, 166, 255, 0.13)";
           context.beginPath();
-          context.moveTo(satellite[0], satellite[1]);
+          context.moveTo(beamSource[0], beamSource[1]);
           context.lineTo(target[0] + perpendicular2d[0] * beamHalfWidth, target[1] + perpendicular2d[1] * beamHalfWidth);
           context.lineTo(target[0] - perpendicular2d[0] * beamHalfWidth, target[1] - perpendicular2d[1] * beamHalfWidth);
           context.closePath();
@@ -1142,11 +1166,11 @@ function OrbitCanvas({
           context.strokeStyle = imaging ? "rgba(78, 225, 145, 0.9)" : "rgba(78, 169, 255, 0.92)";
           context.lineWidth = 1.2;
           context.beginPath();
-          context.moveTo(satellite[0], satellite[1]);
+          context.moveTo(beamSource[0], beamSource[1]);
           context.lineTo(target[0], target[1]);
           context.stroke();
-          const pulseX = satellite[0] + (target[0] - satellite[0]) * (0.25 + phase * 0.7);
-          const pulseY = satellite[1] + (target[1] - satellite[1]) * (0.25 + phase * 0.7);
+          const pulseX = beamSource[0] + (target[0] - beamSource[0]) * (0.25 + phase * 0.7);
+          const pulseY = beamSource[1] + (target[1] - beamSource[1]) * (0.25 + phase * 0.7);
           context.fillStyle = imaging ? "#62e79b" : "#61b4ff";
           context.beginPath();
           context.arc(pulseX, pulseY, 2.2, 0, Math.PI * 2);
@@ -2422,7 +2446,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <span>Universal panel reference: add SOLAR_PANEL_AXIS with +X, −X, +Y, −Y, +Z or −Z and SUN_PANEL_INCIDENCE in degrees. Legacy signed columns such as sun_+Y_panels and sun_-Z_panels remain supported. When no axis field exists, Auto mode infers the best-matching signed axis from SUN_BODY and a 0–100 SOLAR_POWER_GENERATED factor. The import override can resolve ambiguous legacy files.</span>
               <span>On import, the modeled cell normal is aligned to the declared/detected reference axis and mounting rotations are reset to 0°. You can then select another axis or apply mounting rotations for comparison.</span>
               <span>TIME: elapsed seconds, ISO-8601, or DD-MM-YYYY HH:mm[:ss] using a 24-hour clock (AM/PM is also accepted), for example 01-01-2028 05:30 · for minute-only TIME, specify the known row interval above or leave it blank to infer sub-minute spacing · SATELLITE_POSITION: Earth-centred km or m (auto-detected by magnitude) and directly drives the orbit · LATITUDE/LONGITUDE: degrees · body vectors: XYZ · ATTITUDE_RPY: degrees, ZYX body-to-ECI · SOLAR_POWER_GENERATED: measured W or an automatically detected 0–100 generation factor. Vector cells in CSV must be quoted.</span>
-              <span>SPACECRAFT_OPERATION values beginning with GSPOINTING activate the blue payload-boresight downlink beam, while imaging/capture values activate the green payload-boresight footprint. Numeric PAYLOAD_EARTH and PAYLOAD_SUN angles drive the payload direction; status text falls back to the configured payload axis.</span>
+              <span>SPACECRAFT_OPERATION values beginning with GSPOINTING activate a blue downlink beam from the installed X/Ka-band communication dish, while imaging/capture values activate a green footprint from the installed optical payload. Numeric PAYLOAD_EARTH and PAYLOAD_SUN angles drive the target direction; rigid spacecraft parts retain their configured mounts while ATTITUDE_RPY rotates the complete spacecraft assembly.</span>
             </details>
           </section>
 

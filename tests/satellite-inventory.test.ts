@@ -10,6 +10,8 @@ import {
   mergeSatelliteInventory,
   readSatelliteInventoryPayload,
 } from "../app/lib/satellite-inventory";
+import { mountedPartCenter } from "../app/lib/satellite-parts";
+import { operationBeamSourceBody } from "../app/lib/satellite-three";
 
 test("trial inventory supplies three distinct EO platform classes", () => {
   assert.equal(DEFAULT_EO_SATELLITES.length, 3);
@@ -90,4 +92,33 @@ test("inventory import counts invalid records while accepting valid ones", () =>
   const result = readSatelliteInventoryPayload({ satellites: [valid, { id: "broken" }] });
   assert.equal(result.items.length, 1);
   assert.equal(result.rejectedCount, 1);
+});
+
+test("operation beams originate from their assigned rigid spacecraft components", () => {
+  const item = cloneInventory([DEFAULT_EO_SATELLITES[2]])[0];
+  const xBand = item.subsystems.find((subsystem) => subsystem.kind === "radio")!;
+  xBand.faceOffsetM = { u: 0.17, v: -0.11, normal: 0.04 };
+  const sBand = structuredClone(xBand);
+  sBand.id = "test-s-band";
+  sBand.name = "S-band patch";
+  sBand.catalogPartId = "radio-sband-patch";
+  sBand.faceOffsetM = { u: -0.21, v: 0.08, normal: 0 };
+  item.subsystems.unshift(sBand);
+
+  const expectedRadioCenter = mountedPartCenter(item, xBand);
+  assert.deepEqual(operationBeamSourceBody(item, "GEOPOINTING"), [
+    expectedRadioCenter.x,
+    expectedRadioCenter.y,
+    expectedRadioCenter.z,
+  ]);
+
+  const payload = item.subsystems.find((subsystem) => subsystem.kind === "payload")!;
+  payload.catalogPartId = "payload-ms8";
+  payload.faceOffsetM = { u: 0.12, v: 0.09, normal: 0.03 };
+  const expectedPayloadCenter = mountedPartCenter(item, payload);
+  assert.deepEqual(operationBeamSourceBody(item, "IMAGING"), [
+    expectedPayloadCenter.x,
+    expectedPayloadCenter.y,
+    expectedPayloadCenter.z,
+  ]);
 });

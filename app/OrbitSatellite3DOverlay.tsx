@@ -4,7 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import * as THREE from "three";
 import { DEFAULT_EO_SATELLITES, type SatelliteInventoryItem } from "./lib/satellite-inventory";
 import { shortestQuaternionTarget, type MissionConfig, type QuaternionTuple, type Vector3 } from "./lib/orbit-model";
-import { buildInventorySatelliteModel, disposeThreeTree, setModelPayloadBoresight } from "./lib/satellite-three";
+import { buildInventorySatelliteModel, disposeThreeTree, inventorySatelliteModelSpanM } from "./lib/satellite-three";
 
 const ATLAS = DEFAULT_EO_SATELLITES.find((item) => item.id === "eo-atlas-600")!;
 const CAMERA_DISTANCE_PX = 720;
@@ -20,7 +20,6 @@ export interface OrbitSatellite3DPose {
   bodyXAxis: Vector3;
   bodyYAxis: Vector3;
   bodyZAxis: Vector3;
-  payloadBoresightBody: Vector3;
   sunDirection: Vector3;
   sunlightFactor: number;
 }
@@ -138,7 +137,6 @@ const OrbitSatellite3DOverlay = forwardRef<OrbitSatellite3DHandle, {
         sunLight.intensity = 0.35 + THREE.MathUtils.clamp(pose.sunlightFactor, 0, 1) * 3.45;
       }
       if (model) {
-        setModelPayloadBoresight(model, pose.payloadBoresightBody);
         const desiredSpanPx = pose.pixelSize * 6.2;
         model.scale.setScalar(desiredSpanPx / Math.max(modelSpanRef.current, 0.1));
       }
@@ -217,8 +215,7 @@ const OrbitSatellite3DOverlay = forwardRef<OrbitSatellite3DHandle, {
     const model = buildInventorySatelliteModel(visualAtlas, 1, false, {
       solarNormalBody: [panelNormalX, panelNormalY, panelNormalZ],
     });
-    modelSpanRef.current = visualAtlas.array.panelLengthM * (visualAtlas.array.wingLayout === "dual" ? 2 : 1)
-      + Math.max(...Object.values(visualAtlas.geometry.dimensionsM));
+    modelSpanRef.current = inventorySatelliteModelSpanM(visualAtlas);
     anchor.add(model);
     modelRef.current = model;
     if (lastPoseRef.current) applyPose(lastPoseRef.current);

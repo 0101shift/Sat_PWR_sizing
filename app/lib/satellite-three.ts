@@ -9,6 +9,51 @@ export function bodyAxisVector(axis: BodyAxis) {
   return new THREE.Vector3(0, 0, sign);
 }
 
+export type OperationBeamSource = "IMAGING" | "GEOPOINTING";
+
+function vectorTuple(vector: THREE.Vector3): [number, number, number] {
+  return [vector.x, vector.y, vector.z];
+}
+
+/**
+ * Returns the rigid body-frame location of the component that emits an
+ * operation visual. Imaging originates at the optical payload; ground-station
+ * pointing prefers an installed X-band/Ka-band dish and otherwise uses the
+ * first attached radio. The returned point intentionally follows the complete
+ * spacecraft attitude instead of articulating an individual subsystem.
+ */
+export function operationBeamSourceBody(
+  item: SatelliteInventoryItem,
+  source: OperationBeamSource,
+): [number, number, number] {
+  const configured = item.subsystems ?? [];
+  const attached = configured.filter((subsystem) => subsystem.attached);
+  const customAssembly = attached.some((subsystem) => Boolean(subsystem.catalogPartId));
+  const payloadAttached = configured.length === 0 || attached.some((subsystem) => subsystem.kind === "payload");
+  if (source === "IMAGING" && !customAssembly && payloadAttached) {
+    const boresight = bodyAxisVector(item.frames.payloadBoresightAxis);
+    const projection = item.geometry.dimensionsM.z / 2 + Math.max(item.geometry.dimensionsM.z * 0.18, 0.06);
+    return vectorTuple(boresight.multiplyScalar(projection));
+  }
+
+  const candidates = attached.filter((subsystem) => subsystem.kind === (source === "IMAGING" ? "payload" : "radio"));
+  const selected = source === "GEOPOINTING"
+    ? candidates.find((subsystem) => /(?:^|[^a-z])(?:x|ka)[-\s/]?band|xband/i.test(`${subsystem.name} ${subsystem.catalogPartId ?? ""}`)) ?? candidates[0]
+    : candidates[0];
+  if (!selected) return [0, 0, 0];
+
+  const center = mountedPartCenter(item, selected);
+  return [center.x, center.y, center.z];
+}
+
+export function inventorySatelliteModelSpanM(
+  item: SatelliteInventoryItem,
+  wingLayout: SatelliteInventoryItem["array"]["wingLayout"] = item.array.wingLayout,
+) {
+  return item.array.panelLengthM * (wingLayout === "dual" ? 2 : 1)
+    + Math.max(...Object.values(item.geometry.dimensionsM));
+}
+
 export function disposeThreeTree(root: THREE.Object3D) {
   root.traverse((child) => {
     if (!(child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.LineSegments)) return;
