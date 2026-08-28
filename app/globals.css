@@ -1671,16 +1671,16 @@ input[type="range"] {
 }
 .chart-legend.dil-primary .measured-key {
   height: 3px;
-  background: #7fb3ff;
-  box-shadow: 0 0 7px rgba(111, 168, 255, 0.7);
+  background: #73f2da;
+  box-shadow: 0 0 7px rgba(115, 242, 218, 0.65);
 }
 .chart-legend.dil-primary .power-key {
-  background: repeating-linear-gradient(90deg, rgba(80, 220, 215, 0.82) 0 6px, transparent 6px 11px);
+  background: repeating-linear-gradient(90deg, #ff8a65 0 6px, transparent 6px 11px);
 }
 .ceiling-key {
-  background: repeating-linear-gradient(90deg, #b89cff 0 2px, transparent 2px 5px);
+  background: repeating-linear-gradient(90deg, #c7a6ff 0 2px, transparent 2px 5px);
 }
-.soc-key { background: var(--amber); }
+.soc-key { background: #ffd166; }
 
 .operation-energy-card {
   min-width: 0;
@@ -1708,15 +1708,6 @@ input[type="range"] {
   gap: 4px;
   padding: 10px 12px;
   background: #091519;
-}
-
-.dil-value-guide > .dil-primary-value {
-  background: linear-gradient(90deg, rgba(111, 168, 255, 0.15), #091519 70%);
-  box-shadow: inset 2px 0 #7fb3ff;
-}
-
-.dil-value-guide > .dil-primary-value b {
-  color: #9ac2ff;
 }
 
 .dil-value-guide b {
@@ -1928,26 +1919,6 @@ input[type="range"] {
   font-family: var(--font-geist-mono), monospace;
   font-size: 11px;
   font-weight: 550;
-}
-
-.dil-engineering-strip > .dil-primary-stat {
-  background: linear-gradient(90deg, rgba(111, 168, 255, 0.14), rgba(9, 21, 25, 0.96));
-  box-shadow: inset 2px 0 #7fb3ff;
-}
-
-.dil-engineering-strip > .dil-primary-stat span,
-.dil-engineering-strip > .dil-primary-stat b {
-  color: #9ac2ff;
-}
-
-.dil-engineering-strip > .dil-ratio-stat {
-  background: linear-gradient(90deg, rgba(184, 156, 255, 0.15), rgba(9, 21, 25, 0.96));
-  box-shadow: inset 2px 0 #b89cff;
-}
-
-.dil-engineering-strip > .dil-ratio-stat span,
-.dil-engineering-strip > .dil-ratio-stat b {
-  color: #ccbaff;
 }
 
 .positive { color: var(--teal); }
@@ -2596,9 +2567,9 @@ input[type="range"] {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  padding: 4px;
-  border: 1px solid var(--line-bright);
-  background: #061115;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .cockpit-output-metrics {
@@ -2649,26 +2620,6 @@ input[type="range"] {
 
 .cockpit-output-metrics td[data-state="critical"] {
   background: #2c1515;
-}
-
-.cockpit-output-metrics td[data-emphasis="dil"] {
-  background: linear-gradient(105deg, rgba(111, 168, 255, 0.18), rgba(9, 23, 27, 0.96) 72%);
-  box-shadow: inset 0 2px #7fb3ff;
-}
-
-.cockpit-output-metrics td[data-emphasis="dil"] .power-metric-label,
-.cockpit-output-metrics td[data-emphasis="dil"] strong {
-  color: #9ac2ff;
-}
-
-.cockpit-output-metrics td[data-emphasis="ratio"] {
-  background: linear-gradient(105deg, rgba(184, 156, 255, 0.17), rgba(9, 23, 27, 0.96) 72%);
-  box-shadow: inset 0 2px #b89cff;
-}
-
-.cockpit-output-metrics td[data-emphasis="ratio"] .power-metric-label,
-.cockpit-output-metrics td[data-emphasis="ratio"] strong {
-  color: #ccbaff;
 }
 
 .cockpit-output-metrics td.is-updating {
@@ -2767,9 +2718,9 @@ input[type="range"] {
   width: 100%;
   height: 34px;
   padding: 0 11px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
+  border: 1px solid #274d52;
+  background: rgba(8, 25, 29, 0.88);
+  color: #9fbabb;
   cursor: pointer;
   font-family: var(--font-geist-mono), monospace;
   font-size: 9px;
@@ -2777,18 +2728,21 @@ input[type="range"] {
   letter-spacing: 0.045em;
   text-align: center;
   text-transform: uppercase;
+  transition: none;
+  animation: none;
 }
 
 .cockpit-stage-view-switcher button.active {
-  border-color: var(--teal);
-  background: #143034;
-  color: var(--teal);
-  box-shadow: inset 0 -2px var(--teal);
+  border-color: #3b777a;
+  background: rgba(8, 25, 29, 0.88);
+  color: #c5dbdc;
+  box-shadow: inset 0 -1px #3b777a;
 }
 
 .cockpit-stage-view-switcher button:hover {
   border-color: #3b777a;
-  color: #78e5df;
+  background: rgba(8, 25, 29, 0.88);
+  color: #c5dbdc;
 }
 
 .cockpit-stage-pane[hidden] {

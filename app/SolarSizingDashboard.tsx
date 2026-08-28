@@ -1574,8 +1574,8 @@ function PowerChart({
 
     const primaryPower = (point: SimulationPoint) => isDilReplay ? (point.measuredPowerW ?? 0) : point.powerW;
     const powerGradient = context.createLinearGradient(0, top, 0, top + plotHeight);
-    powerGradient.addColorStop(0, isDilReplay ? "rgba(111, 168, 255, 0.42)" : "rgba(73, 217, 212, 0.38)");
-    powerGradient.addColorStop(1, isDilReplay ? "rgba(111, 168, 255, 0.02)" : "rgba(73, 217, 212, 0.015)");
+    powerGradient.addColorStop(0, isDilReplay ? "rgba(115, 242, 218, 0.42)" : "rgba(73, 217, 212, 0.38)");
+    powerGradient.addColorStop(1, isDilReplay ? "rgba(115, 242, 218, 0.02)" : "rgba(73, 217, 212, 0.015)");
     context.beginPath();
     context.moveTo(x(sampledPoints[0].tSec), top + plotHeight);
     sampledPoints.forEach((point) => context.lineTo(x(point.tSec), yPower(primaryPower(point))));
@@ -1590,7 +1590,7 @@ function PowerChart({
       if (index === 0) context.moveTo(xx, yy);
       else context.lineTo(xx, yy);
     });
-    context.strokeStyle = isDilReplay ? "#7fb3ff" : "#50dcd7";
+    context.strokeStyle = isDilReplay ? "#73f2da" : "#50dcd7";
     context.lineWidth = isDilReplay ? 2.2 : 1.8;
     context.stroke();
 
@@ -1602,7 +1602,7 @@ function PowerChart({
         if (index === 0) context.moveTo(xx, yy);
         else context.lineTo(xx, yy);
       });
-      context.strokeStyle = "rgba(80, 220, 215, 0.82)";
+      context.strokeStyle = "rgba(255, 138, 101, 0.92)";
       context.lineWidth = 1.25;
       context.setLineDash([6, 5]);
       context.stroke();
@@ -1617,7 +1617,7 @@ function PowerChart({
         if (index === 0) context.moveTo(xx, yy);
         else context.lineTo(xx, yy);
       });
-      context.strokeStyle = "#b89cff";
+      context.strokeStyle = "#c7a6ff";
       context.lineWidth = 1.2;
       context.setLineDash([2, 4]);
       context.stroke();
@@ -1631,7 +1631,7 @@ function PowerChart({
       if (index === 0) context.moveTo(xx, yy);
       else context.lineTo(xx, yy);
     });
-    context.strokeStyle = "#f1b459";
+    context.strokeStyle = "#ffd166";
     context.lineWidth = 1.5;
     context.stroke();
     const cursor = points[clamp(currentIndex, 0, points.length - 1)];
@@ -1652,11 +1652,11 @@ function PowerChart({
       context.moveTo(hoverX, top);
       context.lineTo(hoverX, top + plotHeight);
       context.stroke();
-      context.fillStyle = isDilReplay ? "#7fb3ff" : "#50dcd7";
+      context.fillStyle = isDilReplay ? "#73f2da" : "#50dcd7";
       context.beginPath();
       context.arc(hoverX, yPower(primaryPower(hoveredPoint)), 3.2, 0, Math.PI * 2);
       context.fill();
-      context.fillStyle = "#f1b459";
+      context.fillStyle = "#ffd166";
       context.beginPath();
       context.arc(hoverX, ySoc(hoveredPoint.socPct), 3.2, 0, Math.PI * 2);
       context.fill();
@@ -1665,7 +1665,7 @@ function PowerChart({
     context.fillStyle = "rgba(203, 228, 228, 0.62)";
     context.textAlign = "left";
     context.fillText("POWER (W)", left, 15);
-    context.fillStyle = "#f1b459";
+    context.fillStyle = "#ffd166";
     context.textAlign = "right";
     context.fillText("SOC %", width - right, 15);
   }, [chartModel, currentIndex, hover, isDilReplay, points, size]);
@@ -1786,14 +1786,12 @@ function PowerMetricCell({
   note,
   state,
   status,
-  emphasis,
 }: {
   label: string;
   value: string;
   note: string;
   state: PowerMetricState;
   status: string;
-  emphasis?: "dil" | "ratio";
 }) {
   const cellRef = useRef<HTMLTableCellElement>(null);
   const previousState = useRef(state);
@@ -1811,7 +1809,7 @@ function PowerMetricCell({
   }, [state]);
 
   return (
-    <td ref={cellRef} data-state={state} data-emphasis={emphasis}>
+    <td ref={cellRef} data-state={state}>
       <span className="power-metric-label">{label}</span>
       <strong>{value}</strong>
       <small>{note}</small>
@@ -2201,7 +2199,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               note={dilData ? `Modeled ${current.powerW.toFixed(0)} W · imported DIL · ${Math.round(current.shadowFactor * 100)}% light` : `Corrected EOL MPP · ${Math.round(current.shadowFactor * 100)}% light · θ ${current.incidenceDeg.toFixed(1)}°`}
               state={powerMetricState}
               status={current.shadowFactor <= 0.02 ? "Eclipse" : powerMetricState === "good" ? "Nominal" : "Below load"}
-              emphasis={dilData ? "dil" : undefined}
             />
             <PowerMetricCell
               label={dilData ? `${dilComparisonLabel} energy / span` : "Generated energy / span"}
@@ -2209,7 +2206,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               note={dilSummary ? `Modeled ${dilSummary.modeledEnergyWh.toFixed(0)} Wh · perfect ceiling ${dilSummary.perfectPointingEnergyWh.toFixed(0)} Wh` : `${result.metrics.energyPerOrbitWh.toFixed(0)} Wh/orbit · ${result.metrics.averagePowerW.toFixed(0)} W average`}
               state={energyMetricState}
               status={primaryEnergyPositive ? "Positive margin" : "Energy deficit"}
-              emphasis={dilData ? "dil" : undefined}
             />
             <PowerMetricCell
               label={dilData ? "DIL / modeled energy" : "Eclipse / orbit"}
@@ -2217,7 +2213,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               note={dilData ? `${dilSummary?.measuredEnergyWh.toFixed(0)} Wh DIL ÷ ${dilSummary?.modeledEnergyWh.toFixed(0)} Wh modeled` : "penumbra weighted"}
               state={dilToModeledMetricState}
               status={!dilSummary ? "Orbit model" : "DIL energy ratio"}
-              emphasis={dilData ? "ratio" : undefined}
             />
             <PowerMetricCell
               label={dilData ? "Modeled minimum battery" : "Minimum battery"}
@@ -2642,7 +2637,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
                 <span className="operation-count">{dilSummary.operations.length} states</span>
               </div>
               <div className="dil-value-guide">
-                <div className="dil-primary-value"><b>{dilComparisonLabel} · primary</b><span>{dilPowerIsFactor ? `Independent imported ${dilData.referencePanelAxis ?? "reference"} factor scaled to the corrected EOL array rating; it does not change when another modeled axis is selected.` : "Imported SOLAR_POWER_GENERATED telemetry interpreted directly as watts; it does not change with dashboard axis selection."}</span></div>
+                <div><b>{dilComparisonLabel} · primary</b><span>{dilPowerIsFactor ? `Independent imported ${dilData.referencePanelAxis ?? "reference"} factor scaled to the corrected EOL array rating; it does not change when another modeled axis is selected.` : "Imported SOLAR_POWER_GENERATED telemetry interpreted directly as watts; it does not change with dashboard axis selection."}</span></div>
                 <div><b>Modeled · comparison</b><span>{dilReferenceAngleActive ? `Imported ${dilData.referencePanelAxis} reference incidence` : `Selected/mounted ${mission.panelFacingAxis} normal × SUN_BODY`} × sunlight × configured EOL array and losses.</span></div>
                 <div><b>Perfect</b><span>Same array and eclipse history with panel incidence fixed at 0°.</span></div>
               </div>
@@ -2674,10 +2669,10 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <div><span>DIL replay samples</span><b>{displayPoints.length.toLocaleString()}</b></div>
               <div><span>Source rows</span><b>{dilData?.sourceRecordCount.toLocaleString()}</b></div>
               <div><span>Recorded span</span><b>{formatDuration(dilSummary.durationSec)}</b></div>
-              <div className="dil-primary-stat"><span>{dilComparisonLabel} / modeled energy</span><b>{dilSummary.measuredEnergyWh.toFixed(1)} / {dilSummary.modeledEnergyWh.toFixed(1)} Wh</b></div>
-              <div className="dil-ratio-stat"><span>DIL / modeled energy</span><b>{dilSummary.measuredToModeledPct.toFixed(1)}%</b></div>
+              <div><span>{dilComparisonLabel} / modeled energy</span><b>{dilSummary.measuredEnergyWh.toFixed(1)} / {dilSummary.modeledEnergyWh.toFixed(1)} Wh</b></div>
+              <div><span>DIL / modeled energy</span><b>{dilSummary.measuredToModeledPct.toFixed(1)}%</b></div>
               <div><span>Perfect-pointing ceiling</span><b>{dilSummary.perfectPointingEnergyWh.toFixed(1)} Wh</b></div>
-              <div className="dil-primary-stat"><span>Average {dilComparisonLabel.toLowerCase()} / modeled</span><b>{dilSummary.averageMeasuredPowerW.toFixed(1)} / {dilSummary.averageModeledPowerW.toFixed(1)} W</b></div>
+              <div><span>Average {dilComparisonLabel.toLowerCase()} / modeled</span><b>{dilSummary.averageMeasuredPowerW.toFixed(1)} / {dilSummary.averageModeledPowerW.toFixed(1)} W</b></div>
               <div><span>Modeled power range</span><b>{dilSummary.minPowerW.toFixed(0)}–{dilSummary.maxPowerW.toFixed(0)} W</b></div>
               <div><span>Attitude capture</span><b>{dilSummary.modeledCapturePct.toFixed(1)}%</b></div>
               <div><span>Reference incidence coverage</span><b>{dilSummary.recordedIncidencePct.toFixed(1)}%</b></div>
