@@ -29,7 +29,11 @@ if not exist "node_modules\.bin\vinext.CMD" (
     exit /b 1
   )
 
-  call npm.cmd ci --no-audit --no-fund
+  rem Use install rather than ci here because shared/extracted dashboard copies may
+  rem contain a package-lock created before the latest package.json update. npm ci
+  rem rejects that recoverable mismatch with EUSAGE; npm install reconciles the
+  rem lockfile and still installs the requested dashboard dependencies.
+  call npm.cmd install --no-audit --no-fund
   if errorlevel 1 (
     echo.
     echo The automatic package download failed.
