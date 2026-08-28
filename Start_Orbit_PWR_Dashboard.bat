@@ -15,10 +15,39 @@ if errorlevel 1 (
 )
 
 if not exist "node_modules\.bin\vinext.CMD" (
-  echo Dashboard dependencies are missing.
-  echo Run npm install in: %CD%
-  pause
-  exit /b 1
+  echo.
+  echo First-time setup: downloading the dashboard packages...
+  echo This requires an internet connection and may take a few minutes.
+  echo.
+
+  where npm.cmd >nul 2>nul
+  if errorlevel 1 (
+    echo npm was not found. A complete Node.js 22 installation is required
+    echo for the automatic first-time package download.
+    echo Download Node.js from https://nodejs.org/ and run this file again.
+    pause
+    exit /b 1
+  )
+
+  call npm.cmd ci --no-audit --no-fund
+  if errorlevel 1 (
+    echo.
+    echo The automatic package download failed.
+    echo Check the internet connection and run this file again.
+    pause
+    exit /b 1
+  )
+
+  if not exist "node_modules\.bin\vinext.CMD" (
+    echo.
+    echo Package installation completed, but the dashboard launcher is missing.
+    echo Run this file again or reinstall Node.js 22 if the issue continues.
+    pause
+    exit /b 1
+  )
+
+  echo.
+  echo Dashboard packages installed successfully.
 )
 
 set "DASHBOARD_PORT=3000"
