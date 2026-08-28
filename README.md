@@ -6,9 +6,9 @@ Local preliminary satellite solar-array sizing and telemetry replay dashboard.
 
 ## Run locally
 
-On Windows, double-click `Start_Orbit_PWR_Dashboard.bat`. On first launch it automatically downloads the dashboard packages, reconciles the npm lockfile when an older shared copy contains a stale one, then starts the live local development server on port 3000 and opens the dashboard. An internet connection is required only for this first-time package installation. If the dashboard is already running on port 3000, the launcher opens the existing instance instead of starting a second copy.
+On 64-bit Windows, double-click `Start_Orbit_PWR_Dashboard.bat`. The launcher is self-contained: when a compatible Node.js installation is unavailable, it downloads a private Node.js 24 LTS runtime from the official Node.js distribution, verifies its SHA-256 checksum, and stores it inside the project without requiring administrator access. It then downloads the dashboard packages, reconciles the npm lockfile when an older shared copy contains a stale one, starts the local development server on port 3000, and opens the dashboard. An internet connection is required only for these first-time downloads. If the dashboard is already running on port 3000, the launcher opens the existing instance instead of starting a second copy.
 
-The launcher still requires a complete Node.js 22.13-or-newer installation, including npm. Project packages under `node_modules` no longer need to be installed manually.
+No separate Node.js or package installation is required. A preinstalled Node.js 22.13-or-newer runtime with npm is reused when available; otherwise the project-private runtime is used. Both `.orbit-pwr-runtime` and `node_modules` can be deleted to reclaim space and will be restored automatically the next time the launcher runs.
 
 Run only one launcher window at a time. Development mode is used intentionally so edits can update safely without invalidating the interactive 3D viewer's JavaScript files.
 
