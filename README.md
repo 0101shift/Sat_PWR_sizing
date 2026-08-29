@@ -34,6 +34,17 @@ The launcher is designed to be the only setup step:
 
 Internet access is needed only for first-time runtime/package downloads. The generated `.orbit-pwr-runtime` and `node_modules` folders can be deleted to reclaim space; the launcher restores them on the next run. Run one launcher window at a time.
 
+## Project sessions
+
+The **Projects** button creates, opens, renames and saves complete local dashboard sessions. Each project is stored under `Orbit_PWR_Projects/<project-name>/` with:
+
+- `project.json` for mission, power, graph and replay settings;
+- `spacecraft.json` for independent simulation/deployed spacecraft snapshots;
+- `dil/source.csv`, `.tsv` or `.json` for the original DIL source when present; and
+- `dil/max-loads.json` for the operation/illumination maximum-load profile.
+
+Opening a project restores the dashboard, spacecraft, DIL replay and maximum loads together. Satellite Configuration can also save an EO platform or custom build directly into any existing project. Project folders are excluded from Git so mission data stays local and can be shared independently when required.
+
 For development with Node.js 22.13 or newer:
 
 ```bash
@@ -57,7 +68,7 @@ Highlights:
 - rigid whole-spacecraft attitude motion during DIL replay—the bus and attached parts retain their configured mounts;
 - green imaging footprint emitted from the installed optical payload and blue downlink beam emitted from the installed X/Ka-band radio dish;
 - shortest-path attitude interpolation between operation states, avoiding unnecessary long rotations;
-- a synchronized DIL-derived/measured power overlay above the Orbit View status legends during actual-data replay.
+- a synchronized, unobtrusive DIL-derived/measured power overlay above the playback controls during actual-data replay.
 
 ### Power + Operations
 
@@ -80,6 +91,7 @@ The configuration workspace separates validated inventory entries from editable 
 - **EO Platforms** contains EO Scout 12U, EO Meridian 150, and EO Atlas 600 as representative, non-flight-qualified starting concepts. Identity and physical configuration are read-only here.
 - **Custom Build** is the editing workspace for spacecraft identity, bus geometry, body-frame assignments, installed subsystems, solar-array rigging, cell/string configuration, load, and battery data.
 - Inventory entries can be duplicated as custom builds, imported/exported as inventory-schema v1 JSON, saved to browser-local storage, and deployed to Orbit View.
+- Any EO platform or custom build can be saved as the independent spacecraft snapshot of a selected project.
 - The deployed spacecraft read-only summary reports loss-adjusted BOL and EOL net array power under normal sunlight. It applies the configured temperature, pointing, MPPT, harness, mismatch, diode, contamination, self-shadowing, system-loss, and irradiance corrections; EOL additionally reflects the selected cell's degraded EOL operating point. Raw array ratings remain available in the Power + operations engineering metrics.
 - The 3D preview supports unrestricted rotation, zoom, pan, fit/reset, axis display, and array-deployment playback.
 - **Save locally** stores the build; **Deploy to orbit** applies the selected build to the mission simulator.
@@ -106,7 +118,7 @@ The preliminary solar-array model includes:
 
 ## DIL actual-data replay
 
-Open **Actual data replay → Upload DIL file**. CSV, TSV, and JSON are parsed locally in the browser and are not uploaded to a server.
+Open **Actual data replay → Upload DIL file**. CSV, TSV, and JSON are parsed locally in the browser. Saving a project copies the original source into that local project folder; it is never uploaded to a remote service.
 
 A valid input contains these core fields. The final two universal panel-reference fields are recommended; legacy signed-axis columns and automatic inference remain supported.
 

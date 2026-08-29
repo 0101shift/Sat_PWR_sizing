@@ -1085,6 +1085,28 @@
   gap: 6px;
 }
 
+.inspectorFooter > .projectSaveRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(118px, 0.42fr);
+  align-items: end;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.projectSaveRow label { display: grid; gap: 4px; }
+.projectSaveRow label > span { color: #78949c; font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
+.projectSaveRow select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--inv-line-bright);
+  background: #07151a;
+  color: #c7dadb;
+  padding: 0 8px;
+  font: 9px var(--font-geist-mono), monospace;
+}
+
+.inspectorFooter .projectSaveRow button { min-width: 0; grid-column: auto; }
+
 .inspectorFooter button {
   width: 100%;
   min-width: 86px;

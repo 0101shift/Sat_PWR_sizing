@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import OrbitSatellite3DOverlay, { type OrbitSatellite3DHandle } from "./OrbitSatellite3DOverlay";
+import ProjectManager from "./ProjectManager";
 import SatelliteInventory from "./satellite-inventory/SatelliteInventory";
 import { DEFAULT_EO_SATELLITES, type SatelliteInventoryItem } from "./lib/satellite-inventory";
 import {
@@ -38,11 +39,63 @@ import {
 } from "./lib/dil-data";
 import { serializeCsv, UTF8_CSV_BOM } from "./lib/csv-export";
 import { inventorySatelliteModelSpanM, operationBeamSourceBody } from "./lib/satellite-three";
+import {
+  ORBIT_PWR_MAX_LOAD_SCHEMA,
+  ORBIT_PWR_PROJECT_SCHEMA,
+  ORBIT_PWR_PROJECT_SPACECRAFT_SCHEMA,
+  projectIdFromName,
+  type OrbitPwrDilSource,
+  type OrbitPwrProjectBundle,
+  type OrbitPwrProjectDocument,
+  type OrbitPwrProjectSummary,
+} from "./lib/project-schema";
 
 type ViewMode = "ORBIT" | "SPACECRAFT";
 type DashboardTab = "SIMULATION" | "SATELLITE_CONFIGURATION";
 type DilOperationSortKey = "operation" | "illumination" | "maxLoad" | "duration" | "incidence" | "primaryEnergy" | "energyUsed" | "netEnergy" | "modeledEnergy" | "perfectEnergy" | "ratio";
 type SortDirection = "ascending" | "descending";
+
+const LOCAL_PROJECTS_API = "/api/local-projects";
+
+async function readProjectApi<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    cache: "no-store",
+  });
+  const payload = await response.json() as { error?: string } & T;
+  if (!response.ok) throw new Error(payload.error ?? "Local project operation failed.");
+  return payload;
+}
+
+function projectSummaryFromBundle(bundle: OrbitPwrProjectBundle): OrbitPwrProjectSummary {
+  return {
+    id: bundle.project.id,
+    name: bundle.project.name,
+    description: bundle.project.description,
+    createdAt: bundle.project.createdAt,
+    updatedAt: bundle.project.updatedAt,
+    spacecraftName: bundle.spacecraft.deployed.name,
+    hasDil: Boolean(bundle.dilSource),
+    maxLoadCount: Object.keys(bundle.maxLoads.loadsW).length,
+  };
+}
+
+function projectFingerprintFromBundle(bundle: OrbitPwrProjectBundle) {
+  return JSON.stringify({
+    mission: bundle.project.dashboard.mission,
+    power: bundle.project.dashboard.power,
+    simulationSatellite: bundle.spacecraft.simulation,
+    deployedSpacecraft: bundle.spacecraft.deployed,
+    engineeringView: bundle.project.dashboard.engineeringView,
+    playbackSpeed: bundle.project.dashboard.playbackSpeed,
+    powerPlotVisibility: bundle.project.dashboard.plotVisibility,
+    dilSampleIntervalSec: bundle.project.dashboard.dil.sampleIntervalSec,
+    dilReferenceAxisOverride: bundle.project.dashboard.dil.referenceAxisOverride,
+    dilSource: bundle.dilSource ?? null,
+    maxLoadsW: bundle.maxLoads.loadsW,
+  });
+}
 
 const DEFAULT_MISSION: MissionConfig = {
   preset: "SSO",
@@ -194,6 +247,66 @@ const CELL_CATALOG: Record<Exclude<CellModel, "CUSTOM">, {
     },
   },
 };
+
+function dashboardConfigurationForSatellite(
+  item: SatelliteInventoryItem,
+  currentMission: MissionConfig,
+  currentPower: PowerConfig,
+) {
+  const attitude: AttitudeMode = item.missionDefaults.attitudeMode === "Sun pointing"
+    ? "SUN_POINTING"
+    : "LVLH";
+  const cellModel: Exclude<CellModel, "CUSTOM"> = item.array.cellModel.startsWith("AZUR 4G32")
+    ? "AZUR_4G32_ADV_4X8"
+    : "AZUR_3G30_ADV_4X8";
+  const catalog = CELL_CATALOG[cellModel];
+  const solarMountRotation = item.subsystems?.find((subsystem) => subsystem.kind === "solar_array" && subsystem.attached)?.rotationDeg
+    ?? { x: 0, y: 0, z: 0 };
+  const mission: MissionConfig = {
+    ...currentMission,
+    attitude,
+    panelFacingAxis: item.frames.solarCellNormalAxis,
+    velocityBodyAxis: item.frames.velocityAxis,
+    nadirBodyAxis: item.frames.nadirAxis,
+    panelRotationXDeg: solarMountRotation.x,
+    panelRotationYDeg: solarMountRotation.y,
+    panelRotationZDeg: solarMountRotation.z,
+    wingLayout: item.array.wingLayout === "dual" ? "DUAL" : "SINGLE",
+  };
+  const fluenceE14Cm2 = item.powerDefaults.fluenceE14Cm2 ?? 5;
+  const eol = catalog.eol[fluenceE14Cm2] ?? catalog.eol[5];
+  const power: PowerConfig = {
+    ...currentPower,
+    cellModel,
+    vmpV: catalog.bol.vmpV,
+    impA: catalog.bol.impA,
+    vscV: catalog.bol.vocV,
+    iscA: catalog.bol.iscA,
+    eolVmpV: eol.vmpV,
+    eolImpA: eol.impA,
+    eolVocV: eol.vocV,
+    eolIscA: eol.iscA,
+    cellAreaCm2: catalog.cellAreaCm2,
+    seriesCells: item.array.seriesCells,
+    parallelStrings: item.array.parallelStrings,
+    packagingEfficiencyPct: item.array.packagingEfficiency * 100,
+    fluenceE14Cm2,
+    referenceIrradianceWm2: item.powerDefaults.referenceIrradianceWm2 ?? 1367,
+    referenceTemperatureC: item.powerDefaults.referenceTemperatureC ?? 28,
+    operatingTemperatureC: item.array.operatingTemperatureC,
+    powerTempCoefficientPctC: item.powerDefaults.powerTempCoefficientPctC ?? -0.08,
+    pointingErrorDeg: item.powerDefaults.pointingErrorDeg ?? 0,
+    angularResponseExponent: item.powerDefaults.angularResponseExponent ?? 1,
+    mpptEfficiencyPct: item.powerDefaults.mpptEfficiency * 100,
+    harnessEfficiencyPct: (item.powerDefaults.harnessEfficiency ?? 1) * 100,
+    mismatchLossPct: item.powerDefaults.mismatchLossPct ?? 0,
+    diodeLossPct: item.powerDefaults.diodeLossPct ?? 0,
+    contaminationLossPct: item.powerDefaults.contaminationLossPct ?? 0,
+    selfShadowLossPct: item.powerDefaults.selfShadowLossPct ?? 0,
+    systemLossPct: item.powerDefaults.systemLossPct ?? 12,
+  };
+  return { mission, power };
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -2098,15 +2211,33 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const [dilData, setDilData] = useState<ParsedDilData | null>(null);
   const [dilError, setDilError] = useState("");
   const [dilLoading, setDilLoading] = useState(false);
+  const [dilSource, setDilSource] = useState<OrbitPwrDilSource | null>(null);
   const [dilSampleIntervalSec, setDilSampleIntervalSec] = useState("");
   const [dilReferenceAxisOverride, setDilReferenceAxisOverride] = useState<"AUTO" | SignedAxis>("AUTO");
   const [dilOperationMaxLoadInputs, setDilOperationMaxLoadInputs] = useState<Record<string, string>>({});
   const [powerPlotVisibility, setPowerPlotVisibility] = useState<PowerPlotVisibility>(DEFAULT_POWER_PLOT_VISIBILITY);
   const [calculationToolkitOpen, setCalculationToolkitOpen] = useState(false);
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false);
+  const [projects, setProjects] = useState<OrbitPwrProjectSummary[]>([]);
+  const [activeProject, setActiveProject] = useState<OrbitPwrProjectSummary | null>(null);
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [projectNotice, setProjectNotice] = useState("Projects are stored beside the dashboard in Orbit_PWR_Projects.");
+  const [savedProjectFingerprint, setSavedProjectFingerprint] = useState("");
   const [dilOperationSort, setDilOperationSort] = useState<{ key: DilOperationSortKey; direction: SortDirection }>({
     key: "operation",
     direction: "ascending",
   });
+  useEffect(() => {
+    let cancelled = false;
+    void readProjectApi<{ projects: OrbitPwrProjectSummary[] }>(LOCAL_PROJECTS_API)
+      .then((response) => {
+        if (!cancelled) setProjects(response.projects);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectNotice("Local project storage will be available when the dashboard is started with the BAT launcher.");
+      });
+    return () => { cancelled = true; };
+  }, []);
   const result = useMemo(
     () => runSimulation(mission, power, simulationSatellite.frames.payloadBoresightAxis),
     [mission, power, simulationSatellite.frames.payloadBoresightAxis],
@@ -2128,6 +2259,38 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
       value.trim() === "" ? undefined : Number(value),
     ]),
   ), [dilOperationMaxLoadInputs]);
+  const projectMaxLoadsW = useMemo(() => Object.fromEntries(
+    Object.entries(dilOperationMaxLoadInputs)
+      .filter(([, value]) => value.trim() !== "")
+      .map(([operation, value]) => [operation, Number(value)] as const)
+      .filter(([, value]) => Number.isFinite(value) && value >= 0),
+  ), [dilOperationMaxLoadInputs]);
+  const projectStateFingerprint = useMemo(() => JSON.stringify({
+    mission,
+    power,
+    simulationSatellite,
+    deployedSpacecraft,
+    engineeringView,
+    playbackSpeed,
+    powerPlotVisibility,
+    dilSampleIntervalSec,
+    dilReferenceAxisOverride,
+    dilSource,
+    maxLoadsW: projectMaxLoadsW,
+  }), [
+    deployedSpacecraft,
+    dilReferenceAxisOverride,
+    dilSampleIntervalSec,
+    dilSource,
+    engineeringView,
+    mission,
+    playbackSpeed,
+    power,
+    powerPlotVisibility,
+    projectMaxLoadsW,
+    simulationSatellite,
+  ]);
+  const projectDirty = Boolean(activeProject && projectStateFingerprint !== savedProjectFingerprint);
   const dilLoadAnalysis = useMemo(
     () => dilEnergyAnalysis ? analyzeDilOperationLoads(dilEnergyAnalysis, dilOperationMaxLoadsW) : null,
     [dilEnergyAnalysis, dilOperationMaxLoadsW],
@@ -2288,63 +2451,12 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   };
 
   const applySatelliteConfiguration = (item: SatelliteInventoryItem) => {
-    const attitude: AttitudeMode = item.missionDefaults.attitudeMode === "Sun pointing"
-      ? "SUN_POINTING"
-      : "LVLH";
-    const cellModel: Exclude<CellModel, "CUSTOM"> = item.array.cellModel.startsWith("AZUR 4G32")
-      ? "AZUR_4G32_ADV_4X8"
-      : "AZUR_3G30_ADV_4X8";
-    const catalog = CELL_CATALOG[cellModel];
-    const solarMountRotation = item.subsystems?.find((subsystem) => subsystem.kind === "solar_array" && subsystem.attached)?.rotationDeg
-      ?? { x: 0, y: 0, z: 0 };
+    const configured = dashboardConfigurationForSatellite(item, mission, power);
 
     setSimulationSatellite(structuredClone(item));
     setDeployedSpacecraft(structuredClone(item));
-    setMission((currentMission) => ({
-      ...currentMission,
-      attitude,
-      panelFacingAxis: item.frames.solarCellNormalAxis,
-      velocityBodyAxis: item.frames.velocityAxis,
-      nadirBodyAxis: item.frames.nadirAxis,
-      panelRotationXDeg: solarMountRotation.x,
-      panelRotationYDeg: solarMountRotation.y,
-      panelRotationZDeg: solarMountRotation.z,
-      wingLayout: item.array.wingLayout === "dual" ? "DUAL" : "SINGLE",
-    }));
-    setPower((currentPower) => {
-      const fluenceE14Cm2 = item.powerDefaults.fluenceE14Cm2 ?? 5;
-      const eol = catalog.eol[fluenceE14Cm2] ?? catalog.eol[5];
-      return {
-        ...currentPower,
-        cellModel,
-        vmpV: catalog.bol.vmpV,
-        impA: catalog.bol.impA,
-        vscV: catalog.bol.vocV,
-        iscA: catalog.bol.iscA,
-        eolVmpV: eol.vmpV,
-        eolImpA: eol.impA,
-        eolVocV: eol.vocV,
-        eolIscA: eol.iscA,
-        cellAreaCm2: catalog.cellAreaCm2,
-        seriesCells: item.array.seriesCells,
-        parallelStrings: item.array.parallelStrings,
-        packagingEfficiencyPct: item.array.packagingEfficiency * 100,
-        fluenceE14Cm2,
-        referenceIrradianceWm2: item.powerDefaults.referenceIrradianceWm2 ?? 1367,
-        referenceTemperatureC: item.powerDefaults.referenceTemperatureC ?? 28,
-        operatingTemperatureC: item.array.operatingTemperatureC,
-        powerTempCoefficientPctC: item.powerDefaults.powerTempCoefficientPctC ?? -0.08,
-        pointingErrorDeg: item.powerDefaults.pointingErrorDeg ?? 0,
-        angularResponseExponent: item.powerDefaults.angularResponseExponent ?? 1,
-        mpptEfficiencyPct: item.powerDefaults.mpptEfficiency * 100,
-        harnessEfficiencyPct: (item.powerDefaults.harnessEfficiency ?? 1) * 100,
-        mismatchLossPct: item.powerDefaults.mismatchLossPct ?? 0,
-        diodeLossPct: item.powerDefaults.diodeLossPct ?? 0,
-        contaminationLossPct: item.powerDefaults.contaminationLossPct ?? 0,
-        selfShadowLossPct: item.powerDefaults.selfShadowLossPct ?? 0,
-        systemLossPct: item.powerDefaults.systemLossPct ?? 12,
-      };
-    });
+    setMission(configured.mission);
+    setPower(configured.power);
     setCurrentIndex(0);
     setPlaying(true);
     setDashboardTab("SIMULATION");
@@ -2378,6 +2490,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
         sampleIntervalSec: requestedInterval,
         referencePanelAxis: dilReferenceAxisOverride === "AUTO" ? undefined : dilReferenceAxisOverride,
       });
+      setDilSource({ fileName: file.name, content: text });
       setDilOperationMaxLoadInputs({});
       setDilData(parsed);
       if (parsed.referencePanelAxis) {
@@ -2392,6 +2505,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
       setCurrentIndex(0);
     } catch (error) {
       setDilOperationMaxLoadInputs({});
+      setDilSource(null);
       setDilData(null);
       setDilError(error instanceof Error ? error.message : "Unable to parse the selected DIL file.");
     } finally {
@@ -2412,6 +2526,253 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
     anchor.download = "orbit-pwr-dil-template.csv";
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const refreshProjectList = async () => {
+    try {
+      const response = await readProjectApi<{ projects: OrbitPwrProjectSummary[] }>(LOCAL_PROJECTS_API);
+      setProjects(response.projects);
+      return response.projects;
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Unable to read the local project workspace.");
+      return [];
+    }
+  };
+
+  const buildProjectBundle = (project: OrbitPwrProjectDocument): OrbitPwrProjectBundle => ({
+    project: {
+      ...project,
+      dashboard: {
+        mission: structuredClone(mission),
+        power: structuredClone(power),
+        engineeringView,
+        playbackSpeed,
+        plotVisibility: { ...powerPlotVisibility },
+        dil: {
+          sampleIntervalSec: dilSampleIntervalSec,
+          referenceAxisOverride: dilReferenceAxisOverride,
+          sourceFileName: dilSource?.fileName,
+        },
+      },
+    },
+    spacecraft: {
+      schema: ORBIT_PWR_PROJECT_SPACECRAFT_SCHEMA,
+      simulation: structuredClone(simulationSatellite),
+      deployed: structuredClone(deployedSpacecraft),
+    },
+    maxLoads: {
+      schema: ORBIT_PWR_MAX_LOAD_SCHEMA,
+      loadsW: { ...projectMaxLoadsW },
+    },
+    dilSource: dilSource ? { ...dilSource } : undefined,
+  });
+
+  const saveProjectBundle = async (bundle: OrbitPwrProjectBundle) => {
+    const response = await readProjectApi<{ project: OrbitPwrProjectBundle }>(LOCAL_PROJECTS_API, {
+      method: "POST",
+      body: JSON.stringify(bundle),
+    });
+    const summary = projectSummaryFromBundle(response.project);
+    setActiveProject(summary);
+    setSavedProjectFingerprint(projectFingerprintFromBundle(response.project));
+    await refreshProjectList();
+    return response.project;
+  };
+
+  const createProject = async (name: string, description: string) => {
+    setProjectBusy(true);
+    try {
+      const availableProjects = await refreshProjectList();
+      const baseId = projectIdFromName(name);
+      let id = baseId;
+      let suffix = 2;
+      while (availableProjects.some((project) => project.id === id)) id = `${baseId.slice(0, 55)}-${suffix++}`;
+      const timestamp = new Date().toISOString();
+      const project: OrbitPwrProjectDocument = {
+        schema: ORBIT_PWR_PROJECT_SCHEMA,
+        id,
+        name: name.trim(),
+        description: description.trim(),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        dashboard: {
+          mission: structuredClone(mission),
+          power: structuredClone(power),
+          engineeringView,
+          playbackSpeed,
+          plotVisibility: { ...powerPlotVisibility },
+          dil: {
+            sampleIntervalSec: dilSampleIntervalSec,
+            referenceAxisOverride: dilReferenceAxisOverride,
+            sourceFileName: dilSource?.fileName,
+          },
+        },
+      };
+      const saved = await saveProjectBundle(buildProjectBundle(project));
+      setProjectNotice(`${saved.project.name} created with its spacecraft, dashboard configuration${saved.dilSource ? ", DIL source and max loads" : ""}.`);
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Unable to create the project.");
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const saveCurrentProject = async () => {
+    if (!activeProject) return;
+    setProjectBusy(true);
+    try {
+      const project: OrbitPwrProjectDocument = {
+        schema: ORBIT_PWR_PROJECT_SCHEMA,
+        id: activeProject.id,
+        name: activeProject.name,
+        description: activeProject.description,
+        createdAt: activeProject.createdAt,
+        updatedAt: new Date().toISOString(),
+        dashboard: {
+          mission: structuredClone(mission),
+          power: structuredClone(power),
+          engineeringView,
+          playbackSpeed,
+          plotVisibility: { ...powerPlotVisibility },
+          dil: {
+            sampleIntervalSec: dilSampleIntervalSec,
+            referenceAxisOverride: dilReferenceAxisOverride,
+            sourceFileName: dilSource?.fileName,
+          },
+        },
+      };
+      const saved = await saveProjectBundle(buildProjectBundle(project));
+      setProjectNotice(`${saved.project.name} saved successfully.`);
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Unable to save the project.");
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const openProject = async (projectId: string) => {
+    if (projectDirty && !window.confirm("The active project has unsaved changes. Open another project and discard them?")) return;
+    setProjectBusy(true);
+    try {
+      const response = await readProjectApi<{ project: OrbitPwrProjectBundle }>(`${LOCAL_PROJECTS_API}?id=${encodeURIComponent(projectId)}`);
+      const bundle = response.project;
+      const savedDil = bundle.project.dashboard.dil;
+      let parsedDil: ParsedDilData | null = null;
+      if (bundle.dilSource) {
+        const requestedInterval = savedDil.sampleIntervalSec.trim() === "" ? undefined : Number(savedDil.sampleIntervalSec);
+        parsedDil = parseDilData(bundle.dilSource.content, bundle.dilSource.fileName, {
+          sampleIntervalSec: requestedInterval,
+          referencePanelAxis: savedDil.referenceAxisOverride === "AUTO" ? undefined : savedDil.referenceAxisOverride,
+        });
+      }
+      setMission(structuredClone(bundle.project.dashboard.mission));
+      setPower(structuredClone(bundle.project.dashboard.power));
+      setSimulationSatellite(structuredClone(bundle.spacecraft.simulation));
+      setDeployedSpacecraft(structuredClone(bundle.spacecraft.deployed));
+      setEngineeringView(bundle.project.dashboard.engineeringView);
+      setPlaybackSpeed(bundle.project.dashboard.playbackSpeed);
+      setPowerPlotVisibility({ ...bundle.project.dashboard.plotVisibility });
+      setDilSampleIntervalSec(savedDil.sampleIntervalSec);
+      setDilReferenceAxisOverride(savedDil.referenceAxisOverride);
+      setDilSource(bundle.dilSource ? { ...bundle.dilSource } : null);
+      setDilData(parsedDil);
+      setDilOperationMaxLoadInputs(Object.fromEntries(
+        Object.entries(bundle.maxLoads.loadsW).map(([key, value]) => [key, String(value)]),
+      ));
+      setCurrentIndex(0);
+      setPlaying(false);
+      setDashboardTab("SIMULATION");
+      setActiveProject(projectSummaryFromBundle(bundle));
+      setSavedProjectFingerprint(projectFingerprintFromBundle(bundle));
+      setProjectNotice(`${bundle.project.name} restored from its project folder.`);
+      setProjectManagerOpen(false);
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Unable to open the project.");
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const renameCurrentProject = async (name: string, description: string) => {
+    if (!activeProject) return;
+    setProjectBusy(true);
+    try {
+      const toId = projectIdFromName(name);
+      const response = await readProjectApi<{ project: OrbitPwrProjectBundle }>(LOCAL_PROJECTS_API, {
+        method: "PATCH",
+        body: JSON.stringify({ fromId: activeProject.id, toId, name: name.trim(), description: description.trim() }),
+      });
+      setActiveProject(projectSummaryFromBundle(response.project));
+      setProjectNotice(`Project details saved as ${response.project.project.name}.`);
+      await refreshProjectList();
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Unable to update project details.");
+    } finally {
+      setProjectBusy(false);
+    }
+  };
+
+  const openProjectManager = () => {
+    setProjectManagerOpen(true);
+    void refreshProjectList();
+  };
+
+  const saveSatelliteToProject = async (item: SatelliteInventoryItem, projectId: string) => {
+    setProjectBusy(true);
+    try {
+      const bundle = activeProject?.id === projectId
+        ? buildProjectBundle({
+          schema: ORBIT_PWR_PROJECT_SCHEMA,
+          id: activeProject.id,
+          name: activeProject.name,
+          description: activeProject.description,
+          createdAt: activeProject.createdAt,
+          updatedAt: new Date().toISOString(),
+          dashboard: {
+            mission: structuredClone(mission),
+            power: structuredClone(power),
+            engineeringView,
+            playbackSpeed,
+            plotVisibility: { ...powerPlotVisibility },
+            dil: {
+              sampleIntervalSec: dilSampleIntervalSec,
+              referenceAxisOverride: dilReferenceAxisOverride,
+              sourceFileName: dilSource?.fileName,
+            },
+          },
+        })
+        : (await readProjectApi<{ project: OrbitPwrProjectBundle }>(`${LOCAL_PROJECTS_API}?id=${encodeURIComponent(projectId)}`)).project;
+      const configured = dashboardConfigurationForSatellite(
+        item,
+        bundle.project.dashboard.mission,
+        bundle.project.dashboard.power,
+      );
+      bundle.project.dashboard.mission = configured.mission;
+      bundle.project.dashboard.power = configured.power;
+      bundle.project.updatedAt = new Date().toISOString();
+      bundle.spacecraft.simulation = structuredClone(item);
+      bundle.spacecraft.deployed = structuredClone(item);
+      const savedResponse = await readProjectApi<{ project: OrbitPwrProjectBundle }>(LOCAL_PROJECTS_API, {
+        method: "POST",
+        body: JSON.stringify(bundle),
+      });
+      const saved = savedResponse.project;
+      if (activeProject?.id === projectId) {
+        setMission(structuredClone(saved.project.dashboard.mission));
+        setPower(structuredClone(saved.project.dashboard.power));
+        setSimulationSatellite(structuredClone(saved.spacecraft.simulation));
+        setDeployedSpacecraft(structuredClone(saved.spacecraft.deployed));
+        setActiveProject(projectSummaryFromBundle(saved));
+        setSavedProjectFingerprint(projectFingerprintFromBundle(saved));
+      }
+      setProjectNotice(`${item.name} saved to ${saved.project.name}.`);
+      await refreshProjectList();
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Unable to save the spacecraft to the project.");
+      throw error;
+    } finally {
+      setProjectBusy(false);
+    }
   };
 
   const exportCsv = () => {
@@ -2594,9 +2955,9 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
           ) : (
             <span className="configuration-mode-label">LOCAL INVENTORY · LIVE 3D</span>
           )}
-          <a className="layout-archive-link" href={layoutVariant === "cockpit" ? "/legacy" : "/"}>
-            {layoutVariant === "cockpit" ? "Archived layout" : "Current layout"}
-          </a>
+          <button type="button" className="project-manager-button" onClick={openProjectManager}>
+            {activeProject ? `${activeProject.name}${projectDirty ? " *" : ""}` : "Projects"}
+          </button>
         </div>
       </header>
 
@@ -2608,6 +2969,10 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
         <SatelliteInventory
           embedded
           activeSimulationId={simulationSatellite.id}
+          projectSatellite={simulationSatellite}
+          activeProjectId={activeProject?.id}
+          activeProjectName={activeProject?.name}
+          projectTargets={projects}
           focusActiveRequest={satelliteFocusRequest}
           environmentContext={{
             bodySun: current.bodySun,
@@ -2617,6 +2982,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
             label: `${dilData ? "DIL replay" : mission.preset} · T+${formatDuration(current.tSec)}`,
           }}
           onUseInSimulator={applySatelliteConfiguration}
+          onSaveToProject={(item, projectId) => saveSatelliteToProject(item, projectId)}
         />
       </section>
       <div className="dashboard-grid dashboard-tab-panel" hidden={dashboardTab !== "SIMULATION"}>
@@ -2739,7 +3105,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
             </label>
             <div className="dil-actions">
               <button type="button" onClick={downloadDilTemplate}>Download template</button>
-              {dilData && <button type="button" onClick={() => { setDilOperationMaxLoadInputs({}); setDilData(null); setDilError(""); setCurrentIndex(0); }}>Return to model</button>}
+              {dilData && <button type="button" onClick={() => { setDilOperationMaxLoadInputs({}); setDilSource(null); setDilData(null); setDilError(""); setCurrentIndex(0); }}>Return to model</button>}
             </div>
             {dilData && (
               <div className="dil-file-status" role="status">
@@ -3098,7 +3464,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
           <footer className="model-note">
             <span>MODEL SCOPE</span>
             <p>
-              {dilData && `DIL replay maps SATELLITE_POSITION directly into the Earth-centred scene. The global Sun and shadow direction are initialized from the first absolute DIL TIME and then held inertially fixed. For the declared reference axis with zero mounting rotation, an explicit imported incidence history is authoritative; this ensures a declared 0° reference angle produces normal-incidence power. Other signed axes and rotated mountings use each row's body-frame SUN_BODY. The imported reference panel axis is ${dilData.referencePanelAxis ?? "unassigned"}; it may come from SOLAR_PANEL_AXIS, a legacy signed-angle column, the import override, or automatic correlation inference. The importer measures and reports disagreement between that reference incidence and SUN_BODY because a large mismatch makes cross-axis comparisons physically inconsistent. Energy is trapezoid-integrated from every original DIL row before display decimation, including irregular timestamp intervals. ${dilPowerIsFactor ? `For this file, SOLAR_POWER_GENERATED is a 0–100 cosine-like ${dilData.referencePanelAxis ?? "panel"} reference factor and is scaled by the corrected unshadowed EOL array rating to produce DIL-derived watts.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts."} When all encountered operation/illumination maximum loads are entered, the imported DIL generation minus those loads drives the conservative worst-case battery SOC and OAP calculation; the default orbit-average load is ignored. Every operation has separate sunlit and eclipse profiles, with penumbra conservatively assigned to the eclipse load profile while its partial generation is retained. A perfect-pointing ceiling retains eclipse and electrical losses but removes attitude-incidence loss. Position magnitudes above 100,000 are treated as metres and converted to kilometres. `}
+              {dilData && `DIL replay maps SATELLITE_POSITION directly into the Earth-centred scene. The global Sun and shadow direction are initialized from the first absolute DIL TIME and then held inertially fixed. For the declared reference axis with zero mounting rotation, an explicit imported incidence history is authoritative; this ensures a declared 0° reference angle produces normal-incidence power. Other signed axes and rotated mountings use each row's body-frame SUN_BODY. The imported reference panel axis is ${dilData.referencePanelAxis ?? "unassigned"}; it may come from SOLAR_PANEL_AXIS, a legacy signed-angle column, the import override, or automatic correlation inference. The importer measures and reports disagreement between that reference incidence and SUN_BODY because a large mismatch makes cross-axis comparisons physically inconsistent. Energy is trapezoid-integrated from every original DIL row before display decimation, including irregular timestamp intervals. ${dilPowerIsFactor ? `For this file, SOLAR_POWER_GENERATED is a 0–100 cosine-like ${dilData.referencePanelAxis ?? "panel"} reference factor and is scaled by the corrected net EOL array rating to produce DIL-derived watts.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts."} When all encountered operation/illumination maximum loads are entered, the imported DIL generation minus those loads drives the conservative worst-case battery SOC and OAP calculation; the default orbit-average load is ignored. Every operation has separate sunlit and eclipse profiles, with penumbra conservatively assigned to the eclipse load profile while its partial generation is retained. A perfect-pointing ceiling retains eclipse and electrical losses but removes attitude-incidence loss. Position magnitudes above 100,000 are treated as metres and converted to kilometres. `}
               Preliminary design only. Keplerian propagation uses semi-major-axis altitude, eccentricity, argument of perigee and true anomaly at epoch, with secular J2 RAAN/perigee drift, analytical Sun position and
               spherical-Earth conical eclipse. The deployed panel is rigidly mounted to the spacecraft; there is no ideal Sun tracker.
               Signed body-axis assignments map velocity and nadir/pointing references into the spacecraft frame, while mounting
@@ -3111,6 +3477,20 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
           </div>
         </section>
       </div>
+      <ProjectManager
+        open={projectManagerOpen}
+        projects={projects}
+        activeProject={activeProject}
+        dirty={projectDirty}
+        busy={projectBusy}
+        notice={projectNotice}
+        onClose={() => setProjectManagerOpen(false)}
+        onRefresh={() => { void refreshProjectList(); }}
+        onCreate={(name, description) => { void createProject(name, description); }}
+        onOpen={(projectId) => { void openProject(projectId); }}
+        onSave={() => { void saveCurrentProject(); }}
+        onRename={(name, description) => { void renameCurrentProject(name, description); }}
+      />
       {calculationToolkitOpen && (
         <div className="calculation-toolkit-backdrop">
           <button

@@ -39,6 +39,7 @@ import {
 } from "../lib/satellite-parts";
 import { buildInventorySatelliteModel } from "../lib/satellite-three";
 import type { Vector3 } from "../lib/orbit-model";
+import type { OrbitPwrProjectSummary } from "../lib/project-schema";
 import styles from "./SatelliteInventory.module.css";
 
 const STORAGE_KEY = "orbit-pwr-eo-inventory-v1";
@@ -655,6 +656,9 @@ function CustomBuildWorkspace({
   setNotice,
   onSave,
   onDeploy,
+  activeProjectId,
+  projectTargets,
+  onSaveToProject,
 }: {
   draft: SatelliteInventoryItem;
   setDraft: Dispatch<SetStateAction<SatelliteInventoryItem>>;
@@ -669,11 +673,15 @@ function CustomBuildWorkspace({
   setNotice: Dispatch<SetStateAction<string>>;
   onSave: (item: SatelliteInventoryItem) => void;
   onDeploy?: (item: SatelliteInventoryItem) => void;
+  activeProjectId?: string;
+  projectTargets: OrbitPwrProjectSummary[];
+  onSaveToProject?: (item: SatelliteInventoryItem, projectId: string) => Promise<void>;
 }) {
   const [category, setCategory] = useState<PartCategory>("Structures");
   const [catalogPartId, setCatalogPartId] = useState(SATELLITE_PART_CATALOG[0].id);
   const [mountAxis, setMountAxis] = useState<BodyAxis>(SATELLITE_PART_CATALOG[0].defaultMountAxis);
   const [selectedSubsystemId, setSelectedSubsystemId] = useState<string | null>(null);
+  const [projectTargetId, setProjectTargetId] = useState(activeProjectId ?? projectTargets[0]?.id ?? "");
   const viewerRef = useRef<ViewerHandle>(null);
   const visibleParts = SATELLITE_PART_CATALOG.filter((part) => part.category === category);
   const catalogPart = SATELLITE_PART_CATALOG.find((part) => part.id === catalogPartId) ?? visibleParts[0];
@@ -681,6 +689,11 @@ function CustomBuildWorkspace({
   const totals = useMemo(() => customAssemblyTotals(draft), [draft]);
   const issues = useMemo(() => validateSatelliteAssembly(draft), [draft]);
   const errorCount = issues.filter((issue) => issue.severity === "error").length;
+  const resolvedProjectTargetId = projectTargets.some((project) => project.id === projectTargetId)
+    ? projectTargetId
+    : activeProjectId && projectTargets.some((project) => project.id === activeProjectId)
+      ? activeProjectId
+      : projectTargets[0]?.id ?? "";
 
   const updateDraft = (mutate: (next: SatelliteInventoryItem) => void) => {
     setDraft((current) => {
@@ -781,6 +794,24 @@ function CustomBuildWorkspace({
       return;
     }
     onDeploy?.(draft);
+  };
+
+  const saveBuildToProject = async () => {
+    if (errorCount > 0) {
+      setNotice(`Resolve ${errorCount} assembly error${errorCount === 1 ? "" : "s"} before saving`);
+      return;
+    }
+    if (!onSaveToProject || !resolvedProjectTargetId) {
+      setNotice("Create a project before saving this spacecraft to a project");
+      return;
+    }
+    try {
+      await onSaveToProject(structuredClone(draft), resolvedProjectTargetId);
+      const target = projectTargets.find((project) => project.id === resolvedProjectTargetId);
+      setNotice(`${draft.name} saved to ${target?.name ?? "project"}`);
+    } catch {
+      setNotice("The spacecraft could not be saved to the selected project");
+    }
   };
 
   return (
@@ -915,6 +946,10 @@ function CustomBuildWorkspace({
         </div>
         <footer className={`${styles.inspectorFooter} ${styles.builderFooter}`}>
           <p aria-live="polite">{notice}</p>
+          {onSaveToProject && <div className={styles.projectSaveRow}>
+            <label><span>Project spacecraft</span><select value={resolvedProjectTargetId} onChange={(event) => setProjectTargetId(event.target.value)} disabled={projectTargets.length === 0}><option value="">Select project</option>{projectTargets.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+            <button type="button" onClick={() => { void saveBuildToProject(); }} disabled={!resolvedProjectTargetId}>Save to project</button>
+          </div>}
           <div>
             <button type="button" onClick={onReplayDeployment} disabled={isPlaying}>{isPlaying ? "Deploying…" : "Replay deployment"}</button>
             <button type="button" onClick={() => setDeployment((value) => value > 0.5 ? 0 : 1)}>Toggle arrays</button>
@@ -930,15 +965,25 @@ function CustomBuildWorkspace({
 export default function SatelliteInventory({
   embedded = false,
   activeSimulationId,
+  projectSatellite,
+  activeProjectId,
+  activeProjectName,
+  projectTargets = [],
   focusActiveRequest = 0,
   environmentContext,
   onUseInSimulator,
+  onSaveToProject,
 }: {
   embedded?: boolean;
   activeSimulationId?: string;
+  projectSatellite?: SatelliteInventoryItem;
+  activeProjectId?: string;
+  activeProjectName?: string;
+  projectTargets?: OrbitPwrProjectSummary[];
   focusActiveRequest?: number;
   environmentContext?: SatelliteEnvironmentContext;
   onUseInSimulator?: (item: SatelliteInventoryItem) => void;
+  onSaveToProject?: (item: SatelliteInventoryItem, projectId: string) => Promise<void>;
 } = {}) {
   const [inventory, setInventory] = useState(() => cloneInventory());
   const [selectedId, setSelectedId] = useState(
@@ -950,10 +995,16 @@ export default function SatelliteInventory({
   const [customDraft, setCustomDraft] = useState(() => createCustomSatelliteDraft());
   const [isPlaying, setIsPlaying] = useState(false);
   const [notice, setNotice] = useState(embedded ? "Configuration inventory connected to simulator" : "Trial inventory loaded");
+  const [projectTargetId, setProjectTargetId] = useState(activeProjectId ?? "");
   const viewerRef = useRef<ViewerHandle>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number | null>(null);
   const selected = inventory.find((item) => item.id === selectedId) ?? inventory[0];
+  const resolvedProjectTargetId = projectTargets.some((project) => project.id === projectTargetId)
+    ? projectTargetId
+    : activeProjectId && projectTargets.some((project) => project.id === activeProjectId)
+      ? activeProjectId
+      : projectTargets[0]?.id ?? "";
 
   useEffect(() => {
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
@@ -965,9 +1016,12 @@ export default function SatelliteInventory({
       const valid = parsed.filter(isSatelliteInventoryItem);
       if (valid.length > 0) {
         restoreTimer = setTimeout(() => {
-          setInventory(valid);
-          setSelectedId(valid.some((item) => item.id === activeSimulationId) ? activeSimulationId! : valid[0].id);
-          setNotice(`Restored ${valid.length} local inventory item${valid.length === 1 ? "" : "s"}`);
+          const restored = projectSatellite
+            ? mergeSatelliteInventory(valid, [projectSatellite]).inventory
+            : valid;
+          setInventory(restored);
+          setSelectedId(restored.some((item) => item.id === activeSimulationId) ? activeSimulationId! : restored[0].id);
+          setNotice(`Restored ${restored.length} local inventory item${restored.length === 1 ? "" : "s"}`);
         }, 0);
       }
     } catch {
@@ -978,7 +1032,15 @@ export default function SatelliteInventory({
     return () => {
       if (restoreTimer) clearTimeout(restoreTimer);
     };
-  }, [activeSimulationId]);
+  }, [activeSimulationId, projectSatellite]);
+
+  useEffect(() => {
+    if (!projectSatellite) return;
+    const mergeTimer = window.setTimeout(() => {
+      setInventory((current) => mergeSatelliteInventory(current, [projectSatellite]).inventory);
+    }, 0);
+    return () => window.clearTimeout(mergeTimer);
+  }, [projectSatellite]);
 
   useEffect(() => {
     return () => {
@@ -1091,6 +1153,20 @@ export default function SatelliteInventory({
   const useInSimulator = () => {
     onUseInSimulator?.(structuredClone(selected));
     setNotice(`${selected.name} deployed to the orbit simulation`);
+  };
+
+  const saveSelectedToProject = async () => {
+    if (!onSaveToProject || !resolvedProjectTargetId) {
+      setNotice("Create a project before saving a project-specific spacecraft");
+      return;
+    }
+    try {
+      await onSaveToProject(structuredClone(selected), resolvedProjectTargetId);
+      const target = projectTargets.find((project) => project.id === resolvedProjectTargetId);
+      setNotice(`${selected.name} saved to ${target?.name ?? activeProjectName ?? "project"}`);
+    } catch {
+      setNotice("The spacecraft could not be saved to the selected project");
+    }
   };
 
   const saveCustomBuild = (item: SatelliteInventoryItem) => {
@@ -1255,6 +1331,10 @@ export default function SatelliteInventory({
           </div>
           <footer className={`${styles.inspectorFooter} ${styles.inventoryFooter}`}>
             <p aria-live="polite">{notice}</p>
+            {onSaveToProject && <div className={styles.projectSaveRow}>
+              <label><span>Project spacecraft</span><select value={resolvedProjectTargetId} onChange={(event) => setProjectTargetId(event.target.value)} disabled={projectTargets.length === 0}><option value="">Select project</option>{projectTargets.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+              <button type="button" onClick={() => { void saveSelectedToProject(); }} disabled={!resolvedProjectTargetId}>Save to project</button>
+            </div>}
             <div>
               <button type="button" className={styles.dangerButton} onClick={deleteSelected} disabled={inventory.length <= 1}>Delete satellite</button>
               <button type="button" onClick={exportJson}>Export JSON</button>
@@ -1277,6 +1357,9 @@ export default function SatelliteInventory({
         setNotice={setNotice}
         onSave={saveCustomBuild}
         onDeploy={onUseInSimulator ? deployCustomBuild : undefined}
+        activeProjectId={activeProjectId}
+        projectTargets={projectTargets}
+        onSaveToProject={onSaveToProject}
       />}
     </main>
   );

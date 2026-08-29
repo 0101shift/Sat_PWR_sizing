@@ -26,7 +26,8 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.doesNotMatch(html, /FIXED ENGINEERING STAGE/i);
   assert.match(html, /Orbit view/i);
   assert.match(html, /Power \+ operations/i);
-  assert.match(html, /Archived layout/i);
+  assert.match(html, /Projects/i);
+  assert.doesNotMatch(html, /Archived layout/i);
   assert.match(html, /EO Atlas 600/i);
   assert.match(html, /Deployed spacecraft/i);
   assert.doesNotMatch(html, /Edit configuration/i);
@@ -107,7 +108,7 @@ test("server-renders the archived dashboard layout independently", async () => {
   const html = await response.text();
   assert.match(html, /Archived Dashboard Layout/i);
   assert.match(html, /layout-legacy/i);
-  assert.match(html, /Current layout/i);
+  assert.match(html, /Projects/i);
   assert.match(html, /Mission simulation/i);
   assert.match(html, /Sun–array geometry/i);
   assert.match(html, /Upload DIL file/i);

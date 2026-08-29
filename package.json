@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/launcher.test.mjs && tsx --test tests/orbit-model.test.ts tests/dil-data.test.ts tests/satellite-inventory.test.ts tests/csv-export.test.ts",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/launcher.test.mjs && tsx --test tests/orbit-model.test.ts tests/dil-data.test.ts tests/satellite-inventory.test.ts tests/csv-export.test.ts tests/project-store.test.ts",
     "lint": "eslint app tests --ignore-pattern dist --ignore-pattern .next --ignore-pattern work",
     "db:generate": "drizzle-kit generate"
   },
