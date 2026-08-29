@@ -402,6 +402,11 @@ export function analyzeDilEnergy(
     * Math.max(0, power.eolImpA)
     * Math.max(1, Math.round(power.seriesCells))
     * Math.max(1, Math.round(power.parallelStrings));
+  const configuredReferenceDate = new Date(
+    Number.isFinite(configuredEpochMs) ? configuredEpochMs : analysisEpochMs,
+  );
+  const correctedEolReferencePowerW = eolArrayPowerW
+    * arrayPowerCorrectionFactors(power, configuredReferenceDate, 0, 1).totalRetention;
   type OperationAccumulator = DilOperationEnergy & { incidenceDegSec: number };
   const operationAccumulators = series.operations.flatMap((operation) =>
     DIL_LOAD_ILLUMINATION_STATES.map((illumination): OperationAccumulator => ({
@@ -435,8 +440,6 @@ export function analyzeDilEnergy(
       * arrayPowerCorrectionFactors(power, date, incidenceDeg, shadowFactor).totalRetention;
     const perfectPointingPowerW = eolArrayPowerW
       * arrayPowerCorrectionFactors(power, date, -power.pointingErrorDeg, shadowFactor).totalRetention;
-    const unshadowedPerfectPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, -power.pointingErrorDeg, 1).totalRetention;
     const rawPowerValue = series.measuredPowerW[index];
     return {
       incidenceDeg,
@@ -444,7 +447,7 @@ export function analyzeDilEnergy(
       modeledPowerW,
       perfectPointingPowerW,
       measuredPowerW: powerSemantics === "PERCENT_MAX"
-        ? clamp(rawPowerValue, 0, 100) / 100 * unshadowedPerfectPowerW
+        ? clamp(rawPowerValue, 0, 100) / 100 * correctedEolReferencePowerW
         : rawPowerValue,
       operationIndex: series.operationIndex[index],
       illumination: dilLoadIlluminationState(shadowFactor),
@@ -646,6 +649,11 @@ export function buildDilSimulation(
     * Math.max(0, power.eolImpA)
     * Math.max(1, Math.round(power.seriesCells))
     * Math.max(1, Math.round(power.parallelStrings));
+  const configuredReferenceDate = new Date(
+    Number.isFinite(configuredEpochMs) ? configuredEpochMs : replayEpochMs,
+  );
+  const correctedEolReferencePowerW = eolArrayPowerW
+    * arrayPowerCorrectionFactors(power, configuredReferenceDate, 0, 1).totalRetention;
   const referenceIncidenceApplies = referencePanelAxis === mission.panelFacingAxis
     && Math.abs(mission.panelRotationXDeg) < 1e-9
     && Math.abs(mission.panelRotationYDeg) < 1e-9
@@ -725,10 +733,8 @@ export function buildDilSimulation(
       * arrayPowerCorrectionFactors(power, date, visualIncidenceDeg, shadowFactor).totalRetention;
     const perfectPointingPowerW = eolArrayPowerW
       * arrayPowerCorrectionFactors(power, date, -power.pointingErrorDeg, shadowFactor).totalRetention;
-    const unshadowedPerfectPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, -power.pointingErrorDeg, 1).totalRetention;
     const measuredPowerW = powerSemantics === "PERCENT_MAX"
-      ? clamp(record.solarPowerGeneratedW, 0, 100) / 100 * unshadowedPerfectPowerW
+      ? clamp(record.solarPowerGeneratedW, 0, 100) / 100 * correctedEolReferencePowerW
       : record.solarPowerGeneratedW;
     const orbitNormal = normalize(cross(positionKm, velocityKmS), axes[2]);
     const betaDeg = Math.asin(clamp(dot(orbitNormal, sunVector), -1, 1)) * RAD;

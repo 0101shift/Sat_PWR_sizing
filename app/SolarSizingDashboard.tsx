@@ -1202,17 +1202,17 @@ function OrbitCanvas({
         context.restore();
       }
 
-      context.fillStyle = "rgba(217, 239, 237, 0.65)";
-      context.font = "500 11px var(--font-geist-mono), monospace";
-      const cameraLabel = orbitCameraMode === "FOLLOW"
-        ? "ORBIT FOLLOW / TRAILING PERSPECTIVE CAMERA"
-        : `${Math.round(zoom * 100)}% VIEW · ALTITUDE ×${orbitRadiusScale.toFixed(1)} VISUAL`;
-      const footerLabel = isDilReplay
-        ? `DIL TRACK · ${cameraLabel}`
-        : `REV ${Math.floor(currentIndex / samplesPerOrbit) + 1} · 1-REV TRAIL · ${cameraLabel}`;
-      context.textAlign = "right";
-      context.fillText(footerLabel, width - 18, height - 18);
-      context.textAlign = "start";
+      if (!isDilReplay) {
+        context.fillStyle = "rgba(217, 239, 237, 0.65)";
+        context.font = "500 11px var(--font-geist-mono), monospace";
+        const cameraLabel = orbitCameraMode === "FOLLOW"
+          ? "ORBIT FOLLOW / TRAILING PERSPECTIVE CAMERA"
+          : `${Math.round(zoom * 100)}% VIEW · ALTITUDE ×${orbitRadiusScale.toFixed(1)} VISUAL`;
+        const footerLabel = `REV ${Math.floor(currentIndex / samplesPerOrbit) + 1} · 1-REV TRAIL · ${cameraLabel}`;
+        context.textAlign = "right";
+        context.fillText(footerLabel, width - 18, height - 18);
+        context.textAlign = "start";
+      }
     } else {
       faceHitRegions.current = [];
       const center: [number, number] = [width * 0.5, height * 0.52];

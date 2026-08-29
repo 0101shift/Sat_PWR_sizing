@@ -170,7 +170,6 @@ function OrbitStage() {
       <div className={styles.liveStrip}><span><i /> SUNLIGHT 100%</span><span>β −6.3°</span><span>PANEL +Y · θ 4.2°</span><span>SUN / SHADOW LOCKED</span><b>IMAGING_TIR</b></div>
       <div className={styles.timeline}><button>Ⅱ</button><button>10×</button><div><i style={{ width: "46%" }} /><span style={{ left: "46%" }} /></div><time>01-01-2028 12:18:40.000</time></div>
       <div className={styles.orbitLegend}><span><i />Sunlight</span><span><i />Penumbra</span><span><i />Umbra</span><small>Earth: NASA Blue Marble</small></div>
-      <div className={styles.stageCorner}>DIL TRACK · ORBIT FOLLOW · TRAILING PERSPECTIVE</div>
     </div>
   );
 }

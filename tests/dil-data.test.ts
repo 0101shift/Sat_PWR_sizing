@@ -11,7 +11,7 @@ import {
   DIL_TEMPLATE_FIELDS,
   parseDilData,
 } from "../app/lib/dil-data";
-import type { MissionConfig, PowerConfig } from "../app/lib/orbit-model";
+import { arrayPowerCorrectionFactors, type MissionConfig, type PowerConfig } from "../app/lib/orbit-model";
 
 const mission: MissionConfig = {
   preset: "LEO",
@@ -443,7 +443,7 @@ test("detects a cosine-like 0–100 DIL factor and converts it to equivalent arr
   assert.ok(replay[0].powerW > 18);
   replay.forEach((point) => assert.ok(Math.abs(point.powerW - (point.measuredPowerW ?? 0)) < 1e-5));
   const analysis = analyzeDilEnergy(parsed.energySeries, mission, power, parsed.epochMs, parsed.powerSemantics);
-  assert.ok(Math.abs(analysis.measuredToModeledPct - 100) < 1e-5);
+  assert.ok(Math.abs(analysis.measuredToModeledPct - 100) < 0.01);
   assert.equal(analysis.recordedIncidencePct, 100);
   const oppositeMission = { ...mission, panelFacingAxis: "-Y" as const };
   const oppositeReplay = buildDilSimulation(parsed.records, oppositeMission, power, parsed.epochMs, parsed.powerSemantics);
@@ -456,6 +456,49 @@ test("detects a cosine-like 0–100 DIL factor and converts it to equivalent arr
   assert.ok((plusY?.energyWh ?? 0) > (minusY?.energyWh ?? 0));
   assert.equal(minusY?.energyWh, 0);
   assert.deepEqual([...sweep.map((axis) => axis.rank)].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+});
+
+test("scales a 100% DIL factor to corrected net EOL power, including pointing loss", () => {
+  const header = csv.split("\n")[0];
+  const rows = Array.from({ length: 12 }, (_, index) => {
+    const angleDeg = index * 7;
+    const generationFactor = Math.max(0, Math.cos(angleDeg * Math.PI / 180)) * 100;
+    const sunX = Math.sin(angleDeg * Math.PI / 180);
+    const sunY = Math.cos(angleDeg * Math.PI / 180);
+    return `${index * 10},"[6928.137,${index},0]",${generationFactor},SUNLIT,0,30,"[${sunX},${sunY},0]","[-1,0,0]",1,"[0,0,0]",CLEAR,SAFE,${angleDeg}`;
+  });
+  const parsed = parseDilData([header, ...rows].join("\n"), "factor-with-pointing-loss.csv");
+  const powerWithPointingLoss = { ...power, pointingErrorDeg: 20 };
+  const replay = buildDilSimulation(
+    parsed.records,
+    mission,
+    powerWithPointingLoss,
+    parsed.epochMs,
+    parsed.powerSemantics,
+  );
+  const rawEolPowerW = powerWithPointingLoss.eolVmpV
+    * powerWithPointingLoss.eolImpA
+    * powerWithPointingLoss.seriesCells
+    * powerWithPointingLoss.parallelStrings;
+  const correctedNetEolPowerW = rawEolPowerW * arrayPowerCorrectionFactors(
+    powerWithPointingLoss,
+    new Date(mission.epoch),
+    0,
+    1,
+  ).totalRetention;
+
+  assert.equal(parsed.powerSemantics, "PERCENT_MAX");
+  assert.ok(Math.abs((replay[0].measuredPowerW ?? 0) - correctedNetEolPowerW) < 1e-5);
+  assert.ok((replay[0].measuredPowerW ?? 0) < (replay[0].perfectPointingPowerW ?? 0));
+
+  const analysis = analyzeDilEnergy(
+    parsed.energySeries,
+    mission,
+    powerWithPointingLoss,
+    parsed.epochMs,
+    parsed.powerSemantics,
+  );
+  assert.ok(Math.abs(analysis.peakMeasuredPowerW - correctedNetEolPowerW) < 1e-5);
 });
 
 test("uses the DIL satellite position directly and auto-detects metres", () => {
