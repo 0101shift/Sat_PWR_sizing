@@ -190,6 +190,9 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
   const expectedEolPower = 2.247 * 1.255 * 32 * 16;
   assert.equal(result.metrics.bolArrayPowerW, expectedBolPower);
   assert.equal(result.metrics.eolArrayPowerW, expectedEolPower);
+  const referenceCorrections = arrayPowerCorrectionFactors(power, new Date(mission.epoch), 0, 1);
+  assert.ok(Math.abs(result.metrics.bolNetArrayPowerW - expectedBolPower * referenceCorrections.totalRetention) < 1e-9);
+  assert.ok(Math.abs(result.metrics.eolNetArrayPowerW - expectedEolPower * referenceCorrections.totalRetention) < 1e-9);
   assert.ok(result.metrics.peakPowerW <= expectedEolPower * 0.88 * 1.04 + 1e-9);
   assert.ok(Math.abs(result.metrics.activeCellAreaM2 - (32 * 16 * 77.55) / 10000) < 1e-12);
   assert.ok(Math.abs(result.metrics.packagedAreaM2 - result.metrics.activeCellAreaM2 / 0.88) < 1e-12);

@@ -2585,8 +2585,8 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <div><span>Sun-facing cell normal</span><b>{mission.panelFacingAxis}</b></div>
               <div><span>Wing layout</span><b>{mission.wingLayout === "DUAL" ? "Dual wing" : "Single wing"}</b></div>
               <div><span>Cell / strings</span><b>{deployedSpacecraft.array.cellModel} · {deployedSpacecraft.array.seriesCells}S × {deployedSpacecraft.array.parallelStrings}P</b></div>
-              <div><span>BOL panel-only power</span><b>{result.metrics.bolArrayPowerW.toFixed(0)} W</b></div>
-              <div><span>EOL panel-only power</span><b>{result.metrics.eolArrayPowerW.toFixed(0)} W</b></div>
+              <div><span>BOL net array power</span><b>{result.metrics.bolNetArrayPowerW.toFixed(0)} W</b></div>
+              <div><span>EOL net array power</span><b>{result.metrics.eolNetArrayPowerW.toFixed(0)} W</b></div>
               <div><span>Packaging</span><b>{power.packagingEfficiencyPct.toFixed(1)}%</b></div>
               <div><span>Operating temperature</span><b>{power.operatingTemperatureC.toFixed(0)}°C</b></div>
             </div>

@@ -77,7 +77,7 @@ The configuration workspace separates validated inventory entries from editable 
 - **EO Platforms** contains EO Scout 12U, EO Meridian 150, and EO Atlas 600 as representative, non-flight-qualified starting concepts. Identity and physical configuration are read-only here.
 - **Custom Build** is the editing workspace for spacecraft identity, bus geometry, body-frame assignments, installed subsystems, solar-array rigging, cell/string configuration, load, and battery data.
 - Inventory entries can be duplicated as custom builds, imported/exported as inventory-schema v1 JSON, saved to browser-local storage, and deployed to Orbit View.
-- The deployed spacecraft read-only summary reports raw panel-only BOL and EOL MPP power before mission-incidence and system-loss corrections.
+- The deployed spacecraft read-only summary reports loss-adjusted BOL and EOL net array power under normal sunlight. It applies the configured temperature, pointing, MPPT, harness, mismatch, diode, contamination, self-shadowing, system-loss, and irradiance corrections; EOL additionally reflects the selected cell's degraded EOL operating point. Raw array ratings remain available in the Power + operations engineering metrics.
 - The 3D preview supports unrestricted rotation, zoom, pan, fit/reset, axis display, and array-deployment playback.
 - **Save locally** stores the build; **Deploy to orbit** applies the selected build to the mission simulator.
 

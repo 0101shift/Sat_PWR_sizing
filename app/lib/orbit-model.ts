@@ -126,6 +126,8 @@ export interface SimulationMetrics {
   arrayIscA: number;
   bolArrayPowerW: number;
   eolArrayPowerW: number;
+  bolNetArrayPowerW: number;
+  eolNetArrayPowerW: number;
   bolArrayVmpV: number;
   bolArrayImpA: number;
   impliedCellEfficiencyPct: number;
@@ -675,6 +677,8 @@ function simulateAxis(
     ? clamp(eolArrayPowerW / bolArrayPowerW, 0, 1.2)
     : 0;
   const referenceCorrections = arrayPowerCorrectionFactors(power, safeEpoch, 0, 1);
+  const bolNetArrayPowerW = bolArrayPowerW * referenceCorrections.totalRetention;
+  const eolNetArrayPowerW = eolArrayPowerW * referenceCorrections.totalRetention;
   const impliedCellEfficiencyPct =
     activeCellAreaM2 > 0
       ? (bolArrayPowerW / (Math.max(1, power.referenceIrradianceWm2) * activeCellAreaM2)) * 100
@@ -789,6 +793,8 @@ function simulateAxis(
       arrayIscA: parallelStrings * Math.max(0, power.eolIscA),
       bolArrayPowerW,
       eolArrayPowerW,
+      bolNetArrayPowerW,
+      eolNetArrayPowerW,
       bolArrayVmpV: seriesCells * Math.max(0, power.vmpV),
       bolArrayImpA: parallelStrings * Math.max(0, power.impA),
       impliedCellEfficiencyPct,
