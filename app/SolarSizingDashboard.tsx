@@ -1525,34 +1525,56 @@ function OrbitCanvas({
   );
 }
 
+type PowerPlotVisibility = {
+  primary: boolean;
+  modeled: boolean;
+  perfect: boolean;
+  load: boolean;
+  soc: boolean;
+};
+
+const DEFAULT_POWER_PLOT_VISIBILITY: PowerPlotVisibility = {
+  primary: true,
+  modeled: true,
+  perfect: true,
+  load: true,
+  soc: true,
+};
+
 function PowerChart({
   points,
   currentIndex,
   dilRecords,
   dilPowerLabel = "DIL-derived",
   showSoc = true,
+  visiblePlots,
 }: {
   points: SimulationPoint[];
   currentIndex: number;
   dilRecords?: DilRecord[];
   dilPowerLabel?: string;
   showSoc?: boolean;
+  visiblePlots: PowerPlotVisibility;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const size = useCanvasSize(canvasRef);
   const [hover, setHover] = useState<{ index: number; x: number; y: number; side: "left" | "right" } | null>(null);
   const isDilReplay = Boolean(dilRecords?.length);
+  const showSocPlot = showSoc && visiblePlots.soc;
   const chartModel = useMemo(() => {
     let maxPower = 1;
     for (const point of points) {
-      maxPower = Math.max(maxPower, point.powerW, point.measuredPowerW ?? 0, point.perfectPointingPowerW ?? 0, point.operationLoadW ?? 0);
+      if (visiblePlots.primary) maxPower = Math.max(maxPower, isDilReplay ? point.measuredPowerW ?? 0 : point.powerW);
+      if (isDilReplay && visiblePlots.modeled) maxPower = Math.max(maxPower, point.powerW);
+      if (visiblePlots.perfect) maxPower = Math.max(maxPower, point.perfectPointingPowerW ?? 0);
+      if (visiblePlots.load) maxPower = Math.max(maxPower, point.operationLoadW ?? 0);
     }
     return {
       sampledPoints: decimateSimulationPoints(points, 1800),
       maxPower: maxPower * 1.08,
       maxTime: Math.max(1e-9, points[points.length - 1]?.tSec ?? 0),
     };
-  }, [points]);
+  }, [isDilReplay, points, visiblePlots]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !points.length) return;
@@ -1606,28 +1628,30 @@ function PowerChart({
     }
 
     const primaryPower = (point: SimulationPoint) => isDilReplay ? (point.measuredPowerW ?? 0) : point.powerW;
-    const powerGradient = context.createLinearGradient(0, top, 0, top + plotHeight);
-    powerGradient.addColorStop(0, isDilReplay ? "rgba(115, 242, 218, 0.42)" : "rgba(73, 217, 212, 0.38)");
-    powerGradient.addColorStop(1, isDilReplay ? "rgba(115, 242, 218, 0.02)" : "rgba(73, 217, 212, 0.015)");
-    context.beginPath();
-    context.moveTo(x(sampledPoints[0].tSec), top + plotHeight);
-    sampledPoints.forEach((point) => context.lineTo(x(point.tSec), yPower(primaryPower(point))));
-    context.lineTo(x(maxTime), top + plotHeight);
-    context.closePath();
-    context.fillStyle = powerGradient;
-    context.fill();
-    context.beginPath();
-    sampledPoints.forEach((point, index) => {
-      const xx = x(point.tSec);
-      const yy = yPower(primaryPower(point));
-      if (index === 0) context.moveTo(xx, yy);
-      else context.lineTo(xx, yy);
-    });
-    context.strokeStyle = isDilReplay ? "#73f2da" : "#50dcd7";
-    context.lineWidth = isDilReplay ? 2.2 : 1.8;
-    context.stroke();
+    if (visiblePlots.primary) {
+      const powerGradient = context.createLinearGradient(0, top, 0, top + plotHeight);
+      powerGradient.addColorStop(0, isDilReplay ? "rgba(115, 242, 218, 0.42)" : "rgba(73, 217, 212, 0.38)");
+      powerGradient.addColorStop(1, isDilReplay ? "rgba(115, 242, 218, 0.02)" : "rgba(73, 217, 212, 0.015)");
+      context.beginPath();
+      context.moveTo(x(sampledPoints[0].tSec), top + plotHeight);
+      sampledPoints.forEach((point) => context.lineTo(x(point.tSec), yPower(primaryPower(point))));
+      context.lineTo(x(maxTime), top + plotHeight);
+      context.closePath();
+      context.fillStyle = powerGradient;
+      context.fill();
+      context.beginPath();
+      sampledPoints.forEach((point, index) => {
+        const xx = x(point.tSec);
+        const yy = yPower(primaryPower(point));
+        if (index === 0) context.moveTo(xx, yy);
+        else context.lineTo(xx, yy);
+      });
+      context.strokeStyle = isDilReplay ? "#73f2da" : "#50dcd7";
+      context.lineWidth = isDilReplay ? 2.2 : 1.8;
+      context.stroke();
+    }
 
-    if (isDilReplay) {
+    if (isDilReplay && visiblePlots.modeled) {
       context.beginPath();
       sampledPoints.forEach((point, index) => {
         const xx = x(point.tSec);
@@ -1642,7 +1666,7 @@ function PowerChart({
       context.setLineDash([]);
     }
 
-    if (sampledPoints.some((point) => point.perfectPointingPowerW !== undefined)) {
+    if (visiblePlots.perfect && sampledPoints.some((point) => point.perfectPointingPowerW !== undefined)) {
       context.beginPath();
       sampledPoints.forEach((point, index) => {
         const xx = x(point.tSec);
@@ -1657,7 +1681,7 @@ function PowerChart({
       context.setLineDash([]);
     }
 
-    if (sampledPoints.some((point) => point.operationLoadW !== undefined)) {
+    if (visiblePlots.load && sampledPoints.some((point) => point.operationLoadW !== undefined)) {
       context.beginPath();
       let previousLoadPoint: SimulationPoint | undefined;
       sampledPoints.forEach((point) => {
@@ -1684,7 +1708,7 @@ function PowerChart({
       context.stroke();
     }
 
-    if (showSoc) {
+    if (showSocPlot) {
       context.beginPath();
       sampledPoints.forEach((point, index) => {
         const xx = x(point.tSec);
@@ -1714,17 +1738,19 @@ function PowerChart({
       context.moveTo(hoverX, top);
       context.lineTo(hoverX, top + plotHeight);
       context.stroke();
-      context.fillStyle = isDilReplay ? "#73f2da" : "#50dcd7";
-      context.beginPath();
-      context.arc(hoverX, yPower(primaryPower(hoveredPoint)), 3.2, 0, Math.PI * 2);
-      context.fill();
-      if (hoveredPoint.operationLoadW !== undefined) {
+      if (visiblePlots.primary) {
+        context.fillStyle = isDilReplay ? "#73f2da" : "#50dcd7";
+        context.beginPath();
+        context.arc(hoverX, yPower(primaryPower(hoveredPoint)), 3.2, 0, Math.PI * 2);
+        context.fill();
+      }
+      if (visiblePlots.load && hoveredPoint.operationLoadW !== undefined) {
         context.fillStyle = "#ff7aa8";
         context.beginPath();
         context.arc(hoverX, yPower(hoveredPoint.operationLoadW), 3.2, 0, Math.PI * 2);
         context.fill();
       }
-      if (showSoc) {
+      if (showSocPlot) {
         context.fillStyle = "#ffd166";
         context.beginPath();
         context.arc(hoverX, ySoc(hoveredPoint.socPct), 3.2, 0, Math.PI * 2);
@@ -1735,12 +1761,12 @@ function PowerChart({
     context.fillStyle = "rgba(203, 228, 228, 0.62)";
     context.textAlign = "left";
     context.fillText("POWER (W)", left, 15);
-    if (showSoc) {
+    if (showSocPlot) {
       context.fillStyle = "#ffd166";
       context.textAlign = "right";
       context.fillText("SOC %", width - right, 15);
     }
-  }, [chartModel, currentIndex, hover, isDilReplay, points, showSoc, size]);
+  }, [chartModel, currentIndex, hover, isDilReplay, points, showSocPlot, size, visiblePlots]);
 
   const hoveredPoint = hover ? points[hover.index] : null;
   const hoveredRecord = hover ? dilRecords?.[hover.index] : null;
@@ -1793,12 +1819,12 @@ function PowerChart({
           <div className="power-chart-tooltip-head"><span>Operation mode</span><b>{hoveredOperation}</b></div>
           <dl>
             <div><dt>Time</dt><dd>{hoveredRecord?.timeLabel ?? `T+ ${formatDuration(hoveredPoint.tSec)}`}</dd></div>
-            {hoveredPoint.measuredPowerW !== undefined && <div><dt>{dilPowerLabel}</dt><dd>{hoveredPoint.measuredPowerW.toFixed(1)} W</dd></div>}
-            {hoveredPoint.operationLoadW !== undefined && <div><dt>Maximum load</dt><dd>{hoveredPoint.operationLoadW.toFixed(1)} W</dd></div>}
-            {hoveredPoint.netPowerW !== undefined && <div><dt>Net power</dt><dd>{hoveredPoint.netPowerW >= 0 ? "+" : ""}{hoveredPoint.netPowerW.toFixed(1)} W</dd></div>}
-            {showSoc && <div><dt>Battery SOC</dt><dd>{hoveredPoint.socPct.toFixed(1)}%</dd></div>}
+            {visiblePlots.primary && hoveredPoint.measuredPowerW !== undefined && <div><dt>{dilPowerLabel}</dt><dd>{hoveredPoint.measuredPowerW.toFixed(1)} W</dd></div>}
+            {visiblePlots.load && hoveredPoint.operationLoadW !== undefined && <div><dt>Maximum load</dt><dd>{hoveredPoint.operationLoadW.toFixed(1)} W</dd></div>}
+            {visiblePlots.primary && visiblePlots.load && hoveredPoint.netPowerW !== undefined && <div><dt>Net power</dt><dd>{hoveredPoint.netPowerW >= 0 ? "+" : ""}{hoveredPoint.netPowerW.toFixed(1)} W</dd></div>}
+            {showSocPlot && <div><dt>Battery SOC</dt><dd>{hoveredPoint.socPct.toFixed(1)}%</dd></div>}
             <div><dt>Illumination</dt><dd>{hoveredIllumination} · {(hoveredPoint.shadowFactor * 100).toFixed(0)}%</dd></div>
-            {hoveredPoint.operationLoadW !== undefined && <div><dt>Load state</dt><dd>{hoveredLoadState}</dd></div>}
+            {visiblePlots.load && hoveredPoint.operationLoadW !== undefined && <div><dt>Load state</dt><dd>{hoveredLoadState}</dd></div>}
           </dl>
         </div>
       )}
@@ -1945,6 +1971,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const [dilSampleIntervalSec, setDilSampleIntervalSec] = useState("");
   const [dilReferenceAxisOverride, setDilReferenceAxisOverride] = useState<"AUTO" | SignedAxis>("AUTO");
   const [dilOperationMaxLoadInputs, setDilOperationMaxLoadInputs] = useState<Record<string, string>>({});
+  const [powerPlotVisibility, setPowerPlotVisibility] = useState<PowerPlotVisibility>(DEFAULT_POWER_PLOT_VISIBILITY);
   const result = useMemo(
     () => runSimulation(mission, power, simulationSatellite.frames.payloadBoresightAxis),
     [mission, power, simulationSatellite.frames.payloadBoresightAxis],
@@ -2299,6 +2326,12 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
     : batteryMinimumPct >= 40
     ? "good"
     : batteryMinimumPct >= 20 ? "watch" : "critical";
+  const togglePowerPlot = (plot: keyof PowerPlotVisibility) => {
+    setPowerPlotVisibility((currentVisibility) => ({
+      ...currentVisibility,
+      [plot]: !currentVisibility[plot],
+    }));
+  };
 
   const renderMissionPowerSummary = (className: string) => (
     <section className={`cockpit-output-metrics ${className}`} aria-label="Mission power summary">
@@ -2552,6 +2585,8 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <div><span>Sun-facing cell normal</span><b>{mission.panelFacingAxis}</b></div>
               <div><span>Wing layout</span><b>{mission.wingLayout === "DUAL" ? "Dual wing" : "Single wing"}</b></div>
               <div><span>Cell / strings</span><b>{deployedSpacecraft.array.cellModel} · {deployedSpacecraft.array.seriesCells}S × {deployedSpacecraft.array.parallelStrings}P</b></div>
+              <div><span>BOL panel-only power</span><b>{result.metrics.bolArrayPowerW.toFixed(0)} W</b></div>
+              <div><span>EOL panel-only power</span><b>{result.metrics.eolArrayPowerW.toFixed(0)} W</b></div>
               <div><span>Packaging</span><b>{power.packagingEfficiencyPct.toFixed(1)}%</b></div>
               <div><span>Operating temperature</span><b>{power.operatingTemperatureC.toFixed(0)}°C</b></div>
             </div>
@@ -2713,16 +2748,16 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
                 <div className={`chart-legend${dilData ? " dil-primary" : ""}`}>
                   {dilData ? (
                     <>
-                      <span><i className="measured-key" /> {dilComparisonLabel}</span>
-                      <span><i className="power-key" /> Modeled comparison</span>
+                      <button type="button" className={powerPlotVisibility.primary ? "active" : ""} aria-pressed={powerPlotVisibility.primary} aria-label={`${powerPlotVisibility.primary ? "Hide" : "Show"} ${dilComparisonLabel} plot`} onClick={() => togglePowerPlot("primary")}><i className="measured-key" /> {dilComparisonLabel}</button>
+                      <button type="button" className={powerPlotVisibility.modeled ? "active" : ""} aria-pressed={powerPlotVisibility.modeled} aria-label={`${powerPlotVisibility.modeled ? "Hide" : "Show"} modeled comparison plot`} onClick={() => togglePowerPlot("modeled")}><i className="power-key" /> Modeled comparison</button>
                     </>
-                  ) : <span><i className="power-key" /> Power</span>}
-                  {dilData && <span><i className="ceiling-key" /> Perfect ceiling</span>}
-                  {dilData && <span><i className="load-key" /> {dilWorstCaseReady ? "Maximum load" : "Maximum load (partial)"}</span>}
-                  <span><i className="soc-key" /> {dilData ? dilWorstCaseReady ? "SOC (max-load)" : "SOC pending loads" : "SOC"}</span>
+                  ) : <button type="button" className={powerPlotVisibility.primary ? "active" : ""} aria-pressed={powerPlotVisibility.primary} aria-label={`${powerPlotVisibility.primary ? "Hide" : "Show"} power plot`} onClick={() => togglePowerPlot("primary")}><i className="power-key" /> Power</button>}
+                  {dilData && <button type="button" className={powerPlotVisibility.perfect ? "active" : ""} aria-pressed={powerPlotVisibility.perfect} aria-label={`${powerPlotVisibility.perfect ? "Hide" : "Show"} perfect ceiling plot`} onClick={() => togglePowerPlot("perfect")}><i className="ceiling-key" /> Perfect ceiling</button>}
+                  {dilData && <button type="button" className={powerPlotVisibility.load ? "active" : ""} aria-pressed={powerPlotVisibility.load} aria-label={`${powerPlotVisibility.load ? "Hide" : "Show"} maximum load plot`} onClick={() => togglePowerPlot("load")}><i className="load-key" /> {dilWorstCaseReady ? "Maximum load" : "Maximum load (partial)"}</button>}
+                  <button type="button" className={powerPlotVisibility.soc && (!dilData || dilWorstCaseReady) ? "active" : ""} aria-pressed={powerPlotVisibility.soc && (!dilData || dilWorstCaseReady)} aria-label={`${powerPlotVisibility.soc ? "Hide" : "Show"} battery SOC plot`} disabled={Boolean(dilData && !dilWorstCaseReady)} onClick={() => togglePowerPlot("soc")}><i className="soc-key" /> {dilData ? dilWorstCaseReady ? "SOC (max-load)" : "SOC pending loads" : "SOC"}</button>
                 </div>
               </div>
-              <PowerChart points={displayPoints} currentIndex={activeIndex} dilRecords={dilData?.records} dilPowerLabel={dilComparisonLabel} showSoc={!dilData || dilWorstCaseReady} />
+              <PowerChart points={displayPoints} currentIndex={activeIndex} dilRecords={dilData?.records} dilPowerLabel={dilComparisonLabel} showSoc={!dilData || dilWorstCaseReady} visiblePlots={powerPlotVisibility} />
             </article>
 
             <article className="axis-card">

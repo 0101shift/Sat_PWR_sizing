@@ -1653,9 +1653,40 @@ input[type="range"] {
 
 .chart-legend {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 13px;
   color: var(--muted);
   font-size: 10px;
+}
+
+.chart-legend button {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.chart-legend button.active {
+  border-color: rgba(94, 185, 187, 0.22);
+  background: rgba(81, 217, 212, 0.04);
+  color: #bad5d4;
+  opacity: 1;
+}
+
+.chart-legend button:focus-visible {
+  outline: 1px solid var(--teal);
+  outline-offset: 1px;
+}
+
+.chart-legend button:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
 }
 
 .chart-legend i {
@@ -1809,11 +1840,17 @@ input[type="range"] {
 }
 
 .operation-load-cell label {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   width: 104px;
+  margin: 0 auto;
   border: 1px solid rgba(102, 171, 174, 0.42);
   background: #071216;
+}
+
+.operation-energy-table th:nth-child(3),
+.operation-energy-table td.operation-load-cell {
+  text-align: center;
 }
 
 .operation-load-cell input {

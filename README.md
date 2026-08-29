@@ -66,7 +66,7 @@ The power workspace presents the generation/battery timeline, signed-axis design
 
 With analytical simulation, the calculated array power is the main trace. With a DIL file loaded, the imported **DIL-derived/measured power becomes the primary trace** and modeled power remains a comparison. The dashboard also reports DIL energy as a percentage of modeled energy, making attitude-constrained generation directly visible.
 
-The chart includes the entered maximum load as a stepped trace. Its cursor reports the current time, DIL/primary generation, maximum load, net power, SOC, illumination/load state, and spacecraft operation. Operation names are preserved in the table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
+The chart includes the entered maximum load as a stepped trace. Every legend item is an on/off control, allowing the primary, modeled, perfect-ceiling, maximum-load, and SOC plots to be inspected individually with automatic rescaling. Its cursor reports the current time, DIL/primary generation, maximum load, net power, SOC, illumination/load state, and spacecraft operation. Operation names are preserved in the table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
 
 ## Satellite Configuration
 
@@ -77,6 +77,7 @@ The configuration workspace separates validated inventory entries from editable 
 - **EO Platforms** contains EO Scout 12U, EO Meridian 150, and EO Atlas 600 as representative, non-flight-qualified starting concepts. Identity and physical configuration are read-only here.
 - **Custom Build** is the editing workspace for spacecraft identity, bus geometry, body-frame assignments, installed subsystems, solar-array rigging, cell/string configuration, load, and battery data.
 - Inventory entries can be duplicated as custom builds, imported/exported as inventory-schema v1 JSON, saved to browser-local storage, and deployed to Orbit View.
+- The deployed spacecraft read-only summary reports raw panel-only BOL and EOL MPP power before mission-incidence and system-loss corrections.
 - The 3D preview supports unrestricted rotation, zoom, pan, fit/reset, axis display, and array-deployment playback.
 - **Save locally** stores the build; **Deploy to orbit** applies the selected build to the mission simulator.
 

@@ -53,6 +53,8 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.doesNotMatch(html, /Standard cell.*CIC/i);
   assert.match(html, /Deployed spacecraft/i);
   assert.match(html, /Body frame/i);
+  assert.match(html, /BOL panel-only power/i);
+  assert.match(html, /EOL panel-only power/i);
   assert.doesNotMatch(html, /Edit spacecraft &amp; solar power model/i);
   assert.match(html, /Spacecraft geometry, body frames and the solar power model/i);
   assert.match(html, /Dual side/i);
@@ -76,6 +78,8 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Self-shadowed area/i);
   assert.match(html, /Other system loss/i);
   assert.match(html, /Generated energy \/ span/i);
+  assert.match(html, /Hide power plot/i);
+  assert.match(html, /Hide battery SOC plot/i);
   assert.match(html, /Perigee \/ apogee/i);
   assert.match(html, /Reset view/i);
   assert.doesNotMatch(html, /Sat POV/i);
