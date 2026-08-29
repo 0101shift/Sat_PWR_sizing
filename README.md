@@ -56,7 +56,8 @@ Highlights:
 - 1×, 5×, 10×, 25×, and 50× playback;
 - rigid whole-spacecraft attitude motion during DIL replay—the bus and attached parts retain their configured mounts;
 - green imaging footprint emitted from the installed optical payload and blue downlink beam emitted from the installed X/Ka-band radio dish;
-- shortest-path attitude interpolation between operation states, avoiding unnecessary long rotations.
+- shortest-path attitude interpolation between operation states, avoiding unnecessary long rotations;
+- a synchronized DIL-derived/measured power overlay above the Orbit View status legends during actual-data replay.
 
 ### Power + Operations
 
@@ -66,7 +67,9 @@ The power workspace presents the generation/battery timeline, signed-axis design
 
 With analytical simulation, the calculated array power is the main trace. With a DIL file loaded, the imported **DIL-derived/measured power becomes the primary trace** and modeled power remains a comparison. The dashboard also reports DIL energy as a percentage of modeled energy, making attitude-constrained generation directly visible.
 
-The chart includes the entered maximum load as a stepped trace. Every legend item is an on/off control, allowing the primary, modeled, perfect-ceiling, maximum-load, and SOC plots to be inspected individually with automatic rescaling. Its cursor reports the current time, DIL/primary generation, maximum load, net power, SOC, illumination/load state, and spacecraft operation. Operation names are preserved in the table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
+The chart includes the entered maximum load as a stepped trace. Every legend item is an on/off control, allowing the primary, modeled, perfect-ceiling, maximum-load, and SOC plots to be inspected individually with automatic rescaling. Its cursor reports the current time, DIL/primary generation, maximum load, net power, SOC, illumination/load state, and spacecraft operation. Operation names are preserved in the sortable operation-energy table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
+
+An expandable **Calculation toolkit** below Power balance exposes the array-power, retention, energy-integration, load, battery, and DIL formulas alongside the active values and model-scope assumptions for calculation cross-checking.
 
 ## Satellite Configuration
 

@@ -55,6 +55,10 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Body frame/i);
   assert.match(html, /BOL net array power/i);
   assert.match(html, /EOL net array power/i);
+  assert.match(html, /Calculation toolkit/i);
+  assert.match(html, /Array power audit/i);
+  assert.match(html, /Energy, load &amp; battery/i);
+  assert.match(html, /Geometry &amp; scope assumptions/i);
   assert.doesNotMatch(html, /Edit spacecraft &amp; solar power model/i);
   assert.match(html, /Spacecraft geometry, body frames and the solar power model/i);
   assert.match(html, /Dual side/i);

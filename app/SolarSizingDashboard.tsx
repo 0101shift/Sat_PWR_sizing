@@ -6,6 +6,7 @@ import SatelliteInventory from "./satellite-inventory/SatelliteInventory";
 import { DEFAULT_EO_SATELLITES, type SatelliteInventoryItem } from "./lib/satellite-inventory";
 import {
   EARTH_RADIUS_KM,
+  arrayPowerCorrectionFactors,
   orbitalFollowCamera,
   formatDuration,
   greenwichMeanSiderealAngleRad,
@@ -31,6 +32,7 @@ import {
   DIL_TEMPLATE_FIELDS,
   parseDilData,
   type DilRecord,
+  type DilOperationEnergy,
   type ParsedDilData,
 } from "./lib/dil-data";
 import { serializeCsv, UTF8_CSV_BOM } from "./lib/csv-export";
@@ -38,6 +40,8 @@ import { inventorySatelliteModelSpanM, operationBeamSourceBody } from "./lib/sat
 
 type ViewMode = "ORBIT" | "SPACECRAFT";
 type DashboardTab = "SIMULATION" | "SATELLITE_CONFIGURATION";
+type DilOperationSortKey = "operation" | "illumination" | "maxLoad" | "duration" | "incidence" | "primaryEnergy" | "energyUsed" | "netEnergy" | "modeledEnergy" | "perfectEnergy" | "ratio";
+type SortDirection = "ascending" | "descending";
 
 const DEFAULT_MISSION: MissionConfig = {
   preset: "SSO",
@@ -1832,6 +1836,69 @@ function PowerChart({
   );
 }
 
+function OrbitDilPowerOverlay({
+  points,
+  currentIndex,
+  label,
+  operation,
+}: {
+  points: SimulationPoint[];
+  currentIndex: number;
+  label: string;
+  operation?: string;
+}) {
+  const chart = useMemo(() => {
+    const sampled = decimateSimulationPoints(points, 700);
+    const maxTime = Math.max(1e-9, points[points.length - 1]?.tSec ?? 0);
+    const maxPower = Math.max(1, ...points.map((point) => point.measuredPowerW ?? 0));
+    const coordinate = (point: SimulationPoint) => ({
+      x: point.tSec / maxTime * 1000,
+      y: 64 - (point.measuredPowerW ?? 0) / maxPower * 56,
+    });
+    const linePath = sampled.map((point, index) => {
+      const { x, y } = coordinate(point);
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(" ");
+    return {
+      maxTime,
+      maxPower,
+      linePath,
+      areaPath: `${linePath} L1000,64 L0,64 Z`,
+    };
+  }, [points]);
+  const activePoint = points[clamp(currentIndex, 0, points.length - 1)] ?? points[0];
+  if (!activePoint) return null;
+  const currentPower = activePoint.measuredPowerW ?? 0;
+  const cursorX = activePoint.tSec / chart.maxTime * 1000;
+  const cursorY = 64 - currentPower / chart.maxPower * 56;
+
+  return (
+    <section className="orbit-dil-power-overlay" aria-label={`${label} power profile in Orbit View`}>
+      <header>
+        <span><i /> {label} power</span>
+        <b>{currentPower.toFixed(1)} W</b>
+        <em>Peak {chart.maxPower.toFixed(1)} W</em>
+        <strong>{operation || "UNSPECIFIED"}</strong>
+      </header>
+      <svg viewBox="0 0 1000 68" preserveAspectRatio="none" role="img" aria-label={`${label} power trace with playback cursor`}>
+        <defs>
+          <linearGradient id="orbit-dil-power-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#73f2da" stopOpacity="0.32" />
+            <stop offset="1" stopColor="#73f2da" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        <line className="orbit-power-grid" x1="0" y1="8" x2="1000" y2="8" />
+        <line className="orbit-power-grid" x1="0" y1="36" x2="1000" y2="36" />
+        <line className="orbit-power-grid" x1="0" y1="64" x2="1000" y2="64" />
+        <path className="orbit-power-area" d={chart.areaPath} />
+        <path className="orbit-power-line" d={chart.linePath} />
+        <line className="orbit-power-cursor" x1={cursorX} y1="5" x2={cursorX} y2="64" />
+        <circle className="orbit-power-point" cx={cursorX} cy={cursorY} r="4" vectorEffect="non-scaling-stroke" />
+      </svg>
+    </section>
+  );
+}
+
 function NumberField({
   label,
   value,
@@ -1972,6 +2039,10 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const [dilReferenceAxisOverride, setDilReferenceAxisOverride] = useState<"AUTO" | SignedAxis>("AUTO");
   const [dilOperationMaxLoadInputs, setDilOperationMaxLoadInputs] = useState<Record<string, string>>({});
   const [powerPlotVisibility, setPowerPlotVisibility] = useState<PowerPlotVisibility>(DEFAULT_POWER_PLOT_VISIBILITY);
+  const [dilOperationSort, setDilOperationSort] = useState<{ key: DilOperationSortKey; direction: SortDirection }>({
+    key: "operation",
+    direction: "ascending",
+  });
   const result = useMemo(
     () => runSimulation(mission, power, simulationSatellite.frames.payloadBoresightAxis),
     [mission, power, simulationSatellite.frames.payloadBoresightAxis],
@@ -1979,6 +2050,10 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const configuredEpochMs = new Date(mission.epoch).getTime();
   const illuminationEpochMs = dilData?.epochMs
     ?? (Number.isFinite(configuredEpochMs) ? configuredEpochMs : Date.UTC(2026, 0, 1));
+  const referencePowerCorrections = useMemo(
+    () => arrayPowerCorrectionFactors(power, new Date(illuminationEpochMs), 0, 1),
+    [illuminationEpochMs, power],
+  );
   const dilEnergyAnalysis = useMemo(
     () => dilData ? analyzeDilEnergy(dilData.energySeries, mission, power, dilData.epochMs, dilData.powerSemantics, dilData.referencePanelAxis) : null,
     [dilData, mission, power],
@@ -2046,6 +2121,64 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
       maxPowerW,
     };
   }, [dilEnergyAnalysis, dilPoints]);
+  const sortedDilOperations = useMemo(() => {
+    if (!dilSummary) return [];
+    const loadsByState = new Map(
+      (dilLoadAnalysis?.operations ?? []).map((load) => [dilOperationLoadKey(load.operation, load.illumination), load]),
+    );
+    const sortValue = (operation: DilOperationEnergy): string | number | undefined => {
+      const load = loadsByState.get(dilOperationLoadKey(operation.operation, operation.illumination));
+      switch (dilOperationSort.key) {
+        case "operation": return operation.operation;
+        case "illumination": return operation.illumination;
+        case "maxLoad": return load?.maxLoadW;
+        case "duration": return operation.durationSec;
+        case "incidence": return operation.averageIncidenceDeg;
+        case "primaryEnergy": return operation.measuredEnergyWh;
+        case "energyUsed": return load?.loadEnergyWh;
+        case "netEnergy": return load?.netEnergyWh;
+        case "modeledEnergy": return operation.modeledEnergyWh;
+        case "perfectEnergy": return operation.perfectPointingEnergyWh;
+        case "ratio": return operation.modeledEnergyWh > 0 ? operation.measuredEnergyWh / operation.modeledEnergyWh : 0;
+      }
+    };
+    return [...dilSummary.operations].sort((left, right) => {
+      const leftValue = sortValue(left);
+      const rightValue = sortValue(right);
+      if (leftValue === undefined && rightValue === undefined) return left.operation.localeCompare(right.operation);
+      if (leftValue === undefined) return 1;
+      if (rightValue === undefined) return -1;
+      const comparison = typeof leftValue === "string" && typeof rightValue === "string"
+        ? leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: "base" })
+        : Number(leftValue) - Number(rightValue);
+      if (comparison !== 0) return dilOperationSort.direction === "ascending" ? comparison : -comparison;
+      const operationComparison = left.operation.localeCompare(right.operation, undefined, { numeric: true, sensitivity: "base" });
+      return operationComparison || left.illumination.localeCompare(right.illumination);
+    });
+  }, [dilLoadAnalysis, dilOperationSort, dilSummary]);
+  const toggleDilOperationSort = (key: DilOperationSortKey) => {
+    setDilOperationSort((currentSort) => ({
+      key,
+      direction: currentSort.key === key
+        ? currentSort.direction === "ascending" ? "descending" : "ascending"
+        : key === "operation" || key === "illumination" ? "ascending" : "descending",
+    }));
+  };
+  const renderDilOperationSortHeader = (key: DilOperationSortKey, label: string) => {
+    const active = dilOperationSort.key === key;
+    return (
+      <th aria-sort={active ? dilOperationSort.direction : "none"}>
+        <button
+          type="button"
+          className={active ? "active" : ""}
+          aria-label={`Sort by ${label}${active ? `, currently ${dilOperationSort.direction}` : ""}`}
+          onClick={() => toggleDilOperationSort(key)}
+        >
+          <span>{label}</span><i aria-hidden="true">{active ? dilOperationSort.direction === "ascending" ? "↑" : "↓" : "↕"}</i>
+        </button>
+      </th>
+    );
+  };
   const designAxes = dilAxisSweep
     ? dilAxisSweep.map((axis) => ({ ...axis, energyPerOrbitWh: axis.energyWh, minSocPct: 0 }))
     : result.axes;
@@ -2295,12 +2428,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const dilComparisonLabel = dilPowerIsFactor
     ? `DIL-derived${dilData?.referencePanelAxis ? ` ${dilData.referencePanelAxis}` : ""}`
     : "Measured";
-  const dilReferenceAngleActive = Boolean(
-    dilData?.referencePanelAxis === mission.panelFacingAxis
-    && Math.abs(mission.panelRotationXDeg) < 1e-9
-    && Math.abs(mission.panelRotationYDeg) < 1e-9
-    && Math.abs(mission.panelRotationZDeg) < 1e-9,
-  );
   const dilGeometryConflict = Boolean(
     dilData && (dilData.referenceVectorMaeDeg > 2 || dilData.referenceVectorMismatchPct > 10),
   );
@@ -2606,6 +2733,57 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <input aria-label="Initial state of charge" id="initial-soc" type="range" min="10" max="100" step="1" value={power.initialSocPct} onChange={(event) => updatePower("initialSocPct", Number(event.target.value))} />
             </div>
           </section>
+
+          <section className="control-section calculation-toolkit">
+            <details>
+              <summary><span>04</span><b>Calculation toolkit</b><em>Formulas & assumptions</em></summary>
+              <div className="calculation-toolkit-body">
+                <section>
+                  <h3>Array power audit</h3>
+                  <code>P<sub>BOL</sub> = Vmp<sub>BOL</sub> × Imp<sub>BOL</sub> × series × parallel</code>
+                  <code>P<sub>EOL</sub> = Vmp<sub>EOL</sub> × Imp<sub>EOL</sub> × series × parallel</code>
+                  <p>Raw BOL {result.metrics.bolArrayPowerW.toFixed(1)} W · raw EOL {result.metrics.eolArrayPowerW.toFixed(1)} W</p>
+                  <code>P<sub>net</sub> = P<sub>rating</sub> × R<sub>temp</sub> × R<sub>electrical</sub> × R<sub>optical</sub> × R<sub>incidence</sub> × R<sub>irradiance</sub> × sunlight</code>
+                  <p>Normal-sun net BOL {result.metrics.bolNetArrayPowerW.toFixed(1)} W · net EOL {result.metrics.eolNetArrayPowerW.toFixed(1)} W</p>
+                </section>
+                <section>
+                  <h3>Current retention factors</h3>
+                  <dl>
+                    <div><dt>Temperature</dt><dd>{(referencePowerCorrections.temperatureRetention * 100).toFixed(2)}%</dd></div>
+                    <div><dt>Electrical</dt><dd>{(referencePowerCorrections.electricalRetention * 100).toFixed(2)}%</dd></div>
+                    <div><dt>Optical</dt><dd>{(referencePowerCorrections.opticalRetention * 100).toFixed(2)}%</dd></div>
+                    <div><dt>Pointing at nominal 0°</dt><dd>{(referencePowerCorrections.incidenceRetention * 100).toFixed(2)}%</dd></div>
+                    <div><dt>Irradiance / distance</dt><dd>{(referencePowerCorrections.irradianceRetention * 100).toFixed(2)}%</dd></div>
+                    <div><dt>Radiation, EOL / BOL</dt><dd>{result.metrics.radiationRetentionPct.toFixed(2)}%</dd></div>
+                  </dl>
+                  <p>Electrical combines MPPT, harness, mismatch, blocking-diode, and other system losses. Optical combines contamination and self-shadowing.</p>
+                </section>
+                <section>
+                  <h3>Energy, load & battery</h3>
+                  <code>E = Σ ((P<sub>i</sub> + P<sub>i+1</sub>) / 2) × Δt / 3600</code>
+                  <code>ΔSOC = (P<sub>generation</sub> − P<sub>load</sub>) × Δt / (battery Wh × 3600) × 100</code>
+                  <p>Analytical playback applies the {power.averageLoadW.toFixed(0)} W orbit-average load continuously. DIL playback ignores it and applies each operation/illumination maximum load.</p>
+                  <p>Penumbra retains fractional generation but conservatively uses the eclipse load. Battery charge is bounded to 0–100%; charge/discharge conversion losses are not modeled separately.</p>
+                </section>
+                <section>
+                  <h3>DIL interpretation</h3>
+                  <p>{dilData ? dilPowerIsFactor ? `SOLAR_POWER_GENERATED is detected as a 0–100 ${dilData.referencePanelAxis ?? "reference-axis"} generation factor and scaled by corrected EOL array power.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts." : "No DIL is loaded. On import, SOLAR_POWER_GENERATED is treated as watts unless a valid 0–100 cosine-like reference-axis factor is detected."}</p>
+                  <p>Modeled power uses the imported attitude/Sun geometry, the selected panel normal, eclipse fraction, EOL cell point, and all configured losses. Perfect power preserves eclipse and losses but fixes incidence at 0°.</p>
+                  <p>DIL and modeled energy use trapezoidal integration over every original timestamp; the visible replay may be decimated only for rendering.</p>
+                </section>
+                <section>
+                  <h3>Geometry & scope assumptions</h3>
+                  <ul>
+                    <li>Two-body Kepler propagation with J2 RAAN/argument-of-perigee drift.</li>
+                    <li>Conical eclipse with a linear penumbra transition; one locked inertial Sun direction per run.</li>
+                    <li>Constant operating temperature and equivalent constant self-shadowing.</li>
+                    <li>Packaging efficiency determines installed area; it is not applied again as an electrical watt loss.</li>
+                    <li>No albedo, spectral response, thermal transient, detailed CAD shadowing, or transient MPPT limit.</li>
+                  </ul>
+                </section>
+              </div>
+            </details>
+          </section>
         </aside>
 
         <section className="workspace">
@@ -2661,6 +2839,14 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
                 orbitSpacecraft={deployedSpacecraft}
                 onAxisChange={(value) => updateMission("panelFacingAxis", value)}
               />
+              {dilPoints?.length && (
+                <OrbitDilPowerOverlay
+                  points={dilPoints}
+                  currentIndex={activeIndex}
+                  label={dilPowerIsFactor ? dilComparisonLabel : "DIL measured"}
+                  operation={currentDilRecord?.spacecraftOperation}
+                />
+              )}
               <div className="orbit-bottom-left-overlays">
                 <div className="orbit-deployed-model" aria-live="polite">
                   <b>{deployedSpacecraft.name.toUpperCase()}</b>
@@ -2790,20 +2976,27 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
                 <div><span className="eyebrow">DIL OPERATION ENERGY</span><h2>Attitude-constrained generation by operation</h2></div>
                 <span className="operation-count">{dilSummary.operations.length} states</span>
               </div>
-              <div className="dil-value-guide">
-                <div><b>{dilComparisonLabel} · primary</b><span>{dilPowerIsFactor ? `Independent imported ${dilData.referencePanelAxis ?? "reference"} factor scaled to the corrected EOL array rating; it does not change when another modeled axis is selected.` : "Imported SOLAR_POWER_GENERATED telemetry interpreted directly as watts; it does not change with dashboard axis selection."}</span></div>
-                <div><b>Modeled · comparison</b><span>{dilReferenceAngleActive ? `Imported ${dilData.referencePanelAxis} reference incidence` : `Selected/mounted ${mission.panelFacingAxis} normal × SUN_BODY`} × sunlight × configured EOL array and losses.</span></div>
-                <div><b>Perfect</b><span>Same array and eclipse history with panel incidence fixed at 0°.</span></div>
-              </div>
               <p className={`operation-load-prompt${dilLoadProfileComplete ? " complete" : ""}`}>
                 <b>{dilLoadProfileComplete ? "Worst-case load profile active." : "Max-load inputs required."}</b>
                 <span>{dilLoadProfileComplete ? "SOC and OAP use DIL generation minus each operation's sunlit or eclipse maximum load." : "Enter a non-negative maximum load for every encountered sunlit/eclipse operation state to calculate worst-case OAP, energy margin, and battery SOC."}</span>
               </p>
               <div className="operation-energy-table-wrap">
                 <table className="operation-energy-table">
-                  <thead><tr><th>Operation</th><th>Illumination</th><th>Max load</th><th>Duration</th><th>Mean {mission.panelFacingAxis} θ</th><th>{dilComparisonLabel}</th><th>Energy used</th><th>Net energy</th><th>Modeled</th><th>Perfect</th><th>DIL / model</th></tr></thead>
+                  <thead><tr>
+                    {renderDilOperationSortHeader("operation", "Operation")}
+                    {renderDilOperationSortHeader("illumination", "Illumination")}
+                    {renderDilOperationSortHeader("maxLoad", "Max load")}
+                    {renderDilOperationSortHeader("duration", "Duration")}
+                    {renderDilOperationSortHeader("incidence", `Mean ${mission.panelFacingAxis} θ`)}
+                    {renderDilOperationSortHeader("primaryEnergy", dilComparisonLabel)}
+                    {renderDilOperationSortHeader("energyUsed", "Energy used")}
+                    {renderDilOperationSortHeader("netEnergy", "Net energy")}
+                    {renderDilOperationSortHeader("modeledEnergy", "Modeled")}
+                    {renderDilOperationSortHeader("perfectEnergy", "Perfect")}
+                    {renderDilOperationSortHeader("ratio", "DIL / model")}
+                  </tr></thead>
                   <tbody>
-                    {dilSummary.operations.map((operation) => {
+                    {sortedDilOperations.map((operation) => {
                       const loadKey = dilOperationLoadKey(operation.operation, operation.illumination);
                       const load = dilLoadAnalysis?.operations.find((item) =>
                         item.operation === operation.operation && item.illumination === operation.illumination,
