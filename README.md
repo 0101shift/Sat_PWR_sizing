@@ -13,7 +13,7 @@ ORBIT·PWR keeps the mission model, spacecraft definition, solar-array sizing, a
 | Workspace | Purpose |
 | --- | --- |
 | **Orbit View** | Propagate the mission, inspect lighting and attitude, replay operations, and visualize the complete spacecraft assembly in Earth orbit. |
-| **Power + Operations** | Compare generated power, battery state, six signed panel normals, and energy by spacecraft operation. For DIL input, the DIL-derived trace is the primary series. |
+| **Power + Operations** | Compare generated power, battery state, six signed panel normals, and energy by spacecraft operation. For DIL input, the DIL-derived trace is primary and user-entered operation max loads produce a conservative OAP/SOC estimate. |
 | **Satellite Configuration** | Start from the EO inventory or create a custom spacecraft, assign body axes, attach payload/radio/power parts, configure the array, save locally, and deploy to the simulator. |
 
 ## Quick start on Windows
@@ -96,7 +96,7 @@ The preliminary solar-array model includes:
 - BOL/EOL MPP rating, series/parallel string topology, active area, and packaging efficiency;
 - temperature correction, pointing uncertainty, angular response, and Sun-distance correction;
 - MPPT/harness, optical, mismatch, diode, contamination, and self-shadowing losses;
-- constant spacecraft load, battery capacity, charge/discharge evolution, and minimum SOC;
+- constant-load default playback plus operation-specific DIL max-load energy, battery, and worst-case OAP analysis;
 - six-axis (`±X`, `±Y`, `±Z`) energy sweep over the complete attitude and illumination history;
 - CSV export and a printable engineering report.
 
@@ -148,7 +148,7 @@ The importer compares explicit reference incidence with incidence reconstructed 
 | **Modeled — comparison** | The selected mounted body normal intersected with each row's `SUN_BODY`, gated by illumination and corrected with the configured electrical/loss model. |
 | **Perfect-pointing ceiling** | The same EOL and loss model with attitude-incidence loss removed while retaining recorded eclipse and penumbra history. |
 
-Energy is trapezoid-integrated from every original row using its real timestamp interval before display decimation. This preserves totals for regular, irregular, and 10/20/50-second data. Battery SOC is driven by operation-constrained modeled power and configured load. The six-axis sweep re-evaluates the complete imported attitude/illumination history for every signed normal while keeping the DIL reference fixed.
+Energy is trapezoid-integrated from every original row using its real timestamp interval before display decimation. This preserves totals for regular, irregular, and 10/20/50-second data. Default playback uses a constant 200 W orbit-average load and 1 kWh battery. DIL playback ignores that default load: enter a maximum load for every imported operation to calculate conservative load energy, worst-case OAP, net DIL energy, and battery SOC. These inputs remain in memory only and reset with a new DIL or page reload. The six-axis sweep re-evaluates the complete imported attitude/illumination history for every signed normal while keeping the DIL reference fixed.
 
 ### Operation visualization
 

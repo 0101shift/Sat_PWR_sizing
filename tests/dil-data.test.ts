@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   analyzeDilAxisSweep,
   analyzeDilEnergy,
+  analyzeDilOperationLoads,
   buildDilSimulation,
   DIL_REQUIRED_FIELDS,
   DIL_TEMPLATE_FIELDS,
@@ -271,7 +272,16 @@ test("rejects a DIL file with missing required fields", () => {
 
 test("builds attitude-constrained replay power and preserves measured telemetry", () => {
   const parsed = parseDilData(csv, "actual.csv");
-  const points = buildDilSimulation(parsed.records, mission, power, parsed.epochMs);
+  const points = buildDilSimulation(
+    parsed.records,
+    mission,
+    power,
+    parsed.epochMs,
+    parsed.powerSemantics,
+    parsed.referencePanelAxis,
+    mission.nadirBodyAxis,
+    { NOMINAL: 300, PAYLOAD: 300 },
+  );
   assert.equal(points.length, 2);
   assert.deepEqual(points[0].panelNormalBody, [0, 1, 0]);
   assert.ok(Math.abs(points[0].incidenceDeg) < 1e-9);
@@ -282,6 +292,8 @@ test("builds attitude-constrained replay power and preserves measured telemetry"
   assert.equal(points[1].powerW, 0);
   assert.equal(points[1].measuredPowerW, 50);
   assert.ok(points[1].socPct < points[0].socPct);
+  assert.equal(points[1].operationLoadW, 300);
+  assert.equal(points[1].netPowerW, -250);
 });
 
 test("resolves numeric payload Earth and Sun angles into the rendered payload boresight", () => {
@@ -324,6 +336,37 @@ test("integrates dense DIL modeled, measured and perfect-pointing energy by oper
   assert.equal(analysis.operations.length, 2);
   assert.ok(Math.abs(analysis.operations.reduce((sum, operation) => sum + operation.measuredEnergyWh, 0) - analysis.measuredEnergyWh) < 1e-9);
   assert.ok(Math.abs(analysis.operations.reduce((sum, operation) => sum + operation.modeledEnergyWh, 0) - analysis.modeledEnergyWh) < 1e-9);
+});
+
+test("calculates conservative DIL load energy and OAP from per-operation maximum loads", () => {
+  const parsed = parseDilData(csv, "actual.csv");
+  const analysis = analyzeDilEnergy(parsed.energySeries, mission, power, parsed.epochMs);
+  const incomplete = analyzeDilOperationLoads(analysis, { NOMINAL: 100 });
+  assert.equal(incomplete.complete, false);
+  assert.deepEqual(incomplete.missingOperations, ["PAYLOAD"]);
+  assert.equal(incomplete.loadEnergyWh, undefined);
+
+  const complete = analyzeDilOperationLoads(analysis, { NOMINAL: 100, PAYLOAD: 300 });
+  assert.equal(complete.complete, true);
+  assert.ok(Math.abs((complete.loadEnergyWh ?? 0) - 3.3333333333) < 1e-6);
+  assert.ok(Math.abs((complete.worstCaseAverageLoadW ?? 0) - 200) < 1e-9);
+  assert.ok(Math.abs((complete.netEnergyWh ?? 0) + 1.25) < 1e-6);
+});
+
+test("DIL battery uses imported generation and operation loads instead of orbit-average load", () => {
+  const parsed = parseDilData(csv, "actual.csv");
+  const highDefaultLoad = { ...power, averageLoadW: 10_000 };
+  const replay = buildDilSimulation(
+    parsed.records,
+    mission,
+    highDefaultLoad,
+    parsed.epochMs,
+    parsed.powerSemantics,
+    parsed.referencePanelAxis,
+    mission.nadirBodyAxis,
+    { NOMINAL: 0, PAYLOAD: 0 },
+  );
+  assert.ok(replay[1].socPct > replay[0].socPct);
 });
 
 test("detects a cosine-like 0–100 DIL factor and converts it to equivalent array watts", () => {

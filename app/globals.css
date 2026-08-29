@@ -1726,6 +1726,23 @@ input[type="range"] {
   overflow-x: auto;
 }
 
+.operation-load-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  border-left: 2px solid #ffcf66;
+  background: rgba(255, 207, 102, 0.06);
+  color: var(--muted-2);
+  font-size: 9px;
+}
+
+.operation-load-prompt b { color: #ffcf66; }
+.operation-load-prompt.complete { border-left-color: var(--teal); background: rgba(81, 217, 212, 0.06); }
+.operation-load-prompt.complete b { color: var(--teal); }
+
 .operation-energy-table {
   width: 100%;
   border-collapse: collapse;
@@ -1761,15 +1778,40 @@ input[type="range"] {
   color: #bad1d0;
 }
 
-.operation-energy-table td:nth-child(5),
 .operation-energy-table .dil-primary-number {
   color: #8cb5ff;
   font-weight: 700;
 }
 
-.operation-energy-table td:nth-child(6) {
+.operation-energy-table td:nth-child(9) {
   color: var(--teal);
 }
+
+.operation-load-cell label {
+  display: inline-flex;
+  align-items: center;
+  width: 104px;
+  border: 1px solid rgba(102, 171, 174, 0.42);
+  background: #071216;
+}
+
+.operation-load-cell input {
+  width: 78px;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #d7eeee;
+  font: inherit;
+  text-align: right;
+}
+
+.operation-load-cell input:focus { box-shadow: inset 0 0 0 1px var(--teal); }
+.operation-load-cell input::placeholder { color: var(--muted-2); }
+.operation-load-cell label > span { padding-right: 7px; color: var(--muted-2); }
+.operation-energy-table td.positive { color: var(--teal); font-weight: 700; }
+.operation-energy-table td.negative { color: #ff8a78; font-weight: 700; }
 
 .operation-energy-table .dil-ratio-number {
   color: #c7b0ff;
@@ -2797,7 +2839,8 @@ input[type="range"] {
 
 .layout-cockpit .cockpit-power-pane.has-dil-operations {
   display: grid;
-  grid-template-rows: minmax(0, 1.1fr) auto minmax(220px, 0.9fr) auto auto;
+  grid-template-rows: minmax(250px, 1.1fr) auto minmax(300px, 0.9fr) auto auto;
+  overflow-y: auto;
 }
 
 .layout-cockpit .cockpit-power-pane > .metrics-grid:not(.cockpit-output-metrics) {
@@ -2893,7 +2936,7 @@ input[type="range"] {
 .layout-cockpit .cockpit-power-pane > .engineering-strip {
   order: 3;
   flex: 0 0 auto;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin: 0;
 }
 
@@ -2922,7 +2965,7 @@ input[type="range"] {
   flex: 0 1 245px;
   min-height: 190px;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   margin: 0;
   max-width: 100%;
   overflow: hidden;

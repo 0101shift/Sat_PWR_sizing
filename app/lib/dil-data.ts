@@ -85,6 +85,22 @@ export type DilOperationEnergy = {
   perfectPointingEnergyWh: number;
 };
 
+export type DilOperationLoad = {
+  operation: string;
+  maxLoadW?: number;
+  loadEnergyWh?: number;
+  netEnergyWh?: number;
+};
+
+export type DilOperationLoadAnalysis = {
+  complete: boolean;
+  missingOperations: string[];
+  loadEnergyWh?: number;
+  worstCaseAverageLoadW?: number;
+  netEnergyWh?: number;
+  operations: DilOperationLoad[];
+};
+
 export type DilEnergyAnalysis = {
   durationSec: number;
   measuredEnergyWh: number;
@@ -102,6 +118,41 @@ export type DilEnergyAnalysis = {
   recordedIncidencePct: number;
   operations: DilOperationEnergy[];
 };
+
+export function analyzeDilOperationLoads(
+  analysis: DilEnergyAnalysis,
+  maxLoadsW: Readonly<Record<string, number | undefined>>,
+): DilOperationLoadAnalysis {
+  const missingOperations: string[] = [];
+  let loadEnergyWh = 0;
+  const operations = analysis.operations.map((operation): DilOperationLoad => {
+    const rawLoadW = maxLoadsW[operation.operation];
+    if (!Number.isFinite(rawLoadW) || (rawLoadW ?? -1) < 0) {
+      missingOperations.push(operation.operation);
+      return { operation: operation.operation };
+    }
+    const maxLoadW = Math.max(0, rawLoadW as number);
+    const operationLoadEnergyWh = maxLoadW * operation.durationSec / 3600;
+    loadEnergyWh += operationLoadEnergyWh;
+    return {
+      operation: operation.operation,
+      maxLoadW,
+      loadEnergyWh: operationLoadEnergyWh,
+      netEnergyWh: operation.measuredEnergyWh - operationLoadEnergyWh,
+    };
+  });
+  const complete = missingOperations.length === 0 && operations.length > 0;
+  return {
+    complete,
+    missingOperations,
+    loadEnergyWh: complete ? loadEnergyWh : undefined,
+    worstCaseAverageLoadW: complete && analysis.durationSec > 0
+      ? loadEnergyWh * 3600 / analysis.durationSec
+      : undefined,
+    netEnergyWh: complete ? analysis.measuredEnergyWh - loadEnergyWh : undefined,
+    operations,
+  };
+}
 
 export type DilAxisEnergy = {
   axis: SignedAxis;
@@ -558,6 +609,7 @@ export function buildDilSimulation(
   powerSemantics: DilPowerSemantics = "WATTS",
   referencePanelAxis?: SignedAxis,
   payloadBoresightAxis: SignedAxis = mission.nadirBodyAxis,
+  operationMaxLoadsW?: Readonly<Record<string, number | undefined>>,
 ): SimulationPoint[] {
   if (!records.length) return [];
   let batteryWh = power.batteryWh * clamp(power.initialSocPct / 100, 0, 1);
@@ -604,6 +656,7 @@ export function buildDilSimulation(
     };
   });
 
+  let previousMeasuredPowerW: number | undefined;
   return records.map((record, index) => {
     const previousIndex = Math.max(0, index - 1);
     const nextIndex = Math.min(records.length - 1, index + 1);
@@ -657,11 +710,20 @@ export function buildDilSimulation(
     const orbitNormal = normalize(cross(positionKm, velocityKmS), axes[2]);
     const betaDeg = Math.asin(clamp(dot(orbitNormal, sunVector), -1, 1)) * RAD;
     const dtSec = index === 0 ? 0 : Math.max(0, record.timeSec - records[index - 1].timeSec);
-    batteryWh = clamp(
-      batteryWh + (modeledPowerW - power.averageLoadW) * dtSec / 3600,
-      0,
-      power.batteryWh,
-    );
+    const operationLoadW = operationMaxLoadsW?.[record.spacecraftOperation];
+    if (operationMaxLoadsW && operationLoadW !== undefined && index > 0) {
+      const previousLoadW = operationMaxLoadsW[records[index - 1].spacecraftOperation];
+      if (previousLoadW !== undefined && previousMeasuredPowerW !== undefined) {
+        const intervalGenerationW = (previousMeasuredPowerW + measuredPowerW) * 0.5;
+        const intervalLoadW = (Math.max(0, previousLoadW) + Math.max(0, operationLoadW)) * 0.5;
+        batteryWh = clamp(
+          batteryWh + (intervalGenerationW - intervalLoadW) * dtSec / 3600,
+          0,
+          power.batteryWh,
+        );
+      }
+    }
+    previousMeasuredPowerW = measuredPowerW;
     return {
       tSec: record.timeSec,
       positionKm,
@@ -691,6 +753,8 @@ export function buildDilSimulation(
       measuredPowerW,
       perfectPointingPowerW,
       dilGenerationFactorPct: powerSemantics === "PERCENT_MAX" ? record.solarPowerGeneratedW : undefined,
+      operationLoadW,
+      netPowerW: operationLoadW === undefined ? undefined : measuredPowerW - operationLoadW,
       socPct: power.batteryWh > 0 ? batteryWh / power.batteryWh * 100 : 0,
     };
   });

@@ -97,6 +97,8 @@ export interface SimulationPoint {
   measuredPowerW?: number;
   perfectPointingPowerW?: number;
   dilGenerationFactorPct?: number;
+  operationLoadW?: number;
+  netPowerW?: number;
   socPct: number;
 }
 
