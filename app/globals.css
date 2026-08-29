@@ -1680,6 +1680,7 @@ input[type="range"] {
 .ceiling-key {
   background: repeating-linear-gradient(90deg, #c7a6ff 0 2px, transparent 2px 5px);
 }
+.load-key { background: #ff7aa8; }
 .soc-key { background: #ffd166; }
 
 .operation-energy-card {
@@ -1776,6 +1777,26 @@ input[type="range"] {
 
 .operation-energy-table td {
   color: #bad1d0;
+}
+
+.illumination-badge {
+  display: inline-flex;
+  min-width: 64px;
+  justify-content: center;
+  padding: 3px 6px;
+  border: 1px solid rgba(81, 217, 212, 0.35);
+  color: #8ee9e2;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+}
+
+.illumination-badge.eclipse {
+  border-color: rgba(255, 138, 120, 0.38);
+  color: #ff9a8a;
+}
+
+.operation-energy-table tr.inactive-operation-state td {
+  opacity: 0.48;
 }
 
 .operation-energy-table .dil-primary-number {

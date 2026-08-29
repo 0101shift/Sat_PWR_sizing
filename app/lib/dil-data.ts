@@ -74,9 +74,22 @@ export type DilEnergySeries = {
 
 export type DilPowerSemantics = "WATTS" | "PERCENT_MAX";
 export type DilReferenceAxisSource = "EXPLICIT_COLUMN" | "LEGACY_COLUMN" | "USER_OVERRIDE" | "INFERRED" | "NONE";
+export const DIL_LOAD_ILLUMINATION_STATES = ["SUNLIT", "ECLIPSE"] as const;
+export type DilLoadIlluminationState = (typeof DIL_LOAD_ILLUMINATION_STATES)[number];
+
+export function dilLoadIlluminationState(sunlightFactor: number): DilLoadIlluminationState {
+  // Penumbra uses the eclipse load profile for conservative sizing while its
+  // actual fractional illumination continues to drive generated power.
+  return sunlightFactor >= 0.98 ? "SUNLIT" : "ECLIPSE";
+}
+
+export function dilOperationLoadKey(operation: string, illumination: DilLoadIlluminationState) {
+  return JSON.stringify([operation, illumination]);
+}
 
 export type DilOperationEnergy = {
   operation: string;
+  illumination: DilLoadIlluminationState;
   durationSec: number;
   sunlitSec: number;
   averageIncidenceDeg: number;
@@ -87,6 +100,7 @@ export type DilOperationEnergy = {
 
 export type DilOperationLoad = {
   operation: string;
+  illumination: DilLoadIlluminationState;
   maxLoadW?: number;
   loadEnergyWh?: number;
   netEnergyWh?: number;
@@ -126,22 +140,23 @@ export function analyzeDilOperationLoads(
   const missingOperations: string[] = [];
   let loadEnergyWh = 0;
   const operations = analysis.operations.map((operation): DilOperationLoad => {
-    const rawLoadW = maxLoadsW[operation.operation];
+    const rawLoadW = maxLoadsW[dilOperationLoadKey(operation.operation, operation.illumination)];
     if (!Number.isFinite(rawLoadW) || (rawLoadW ?? -1) < 0) {
-      missingOperations.push(operation.operation);
-      return { operation: operation.operation };
+      if (operation.durationSec > 0) missingOperations.push(`${operation.operation} · ${operation.illumination}`);
+      return { operation: operation.operation, illumination: operation.illumination };
     }
     const maxLoadW = Math.max(0, rawLoadW as number);
     const operationLoadEnergyWh = maxLoadW * operation.durationSec / 3600;
     loadEnergyWh += operationLoadEnergyWh;
     return {
       operation: operation.operation,
+      illumination: operation.illumination,
       maxLoadW,
       loadEnergyWh: operationLoadEnergyWh,
       netEnergyWh: operation.measuredEnergyWh - operationLoadEnergyWh,
     };
   });
-  const complete = missingOperations.length === 0 && operations.length > 0;
+  const complete = missingOperations.length === 0 && analysis.operations.some((operation) => operation.durationSec > 0);
   return {
     complete,
     missingOperations,
@@ -388,16 +403,22 @@ export function analyzeDilEnergy(
     * Math.max(1, Math.round(power.seriesCells))
     * Math.max(1, Math.round(power.parallelStrings));
   type OperationAccumulator = DilOperationEnergy & { incidenceDegSec: number };
-  const operationAccumulators = series.operations.map((operation): OperationAccumulator => ({
-    operation,
-    durationSec: 0,
-    sunlitSec: 0,
-    averageIncidenceDeg: 0,
-    incidenceDegSec: 0,
-    measuredEnergyWh: 0,
-    modeledEnergyWh: 0,
-    perfectPointingEnergyWh: 0,
-  }));
+  const operationAccumulators = series.operations.flatMap((operation) =>
+    DIL_LOAD_ILLUMINATION_STATES.map((illumination): OperationAccumulator => ({
+      operation,
+      illumination,
+      durationSec: 0,
+      sunlitSec: 0,
+      averageIncidenceDeg: 0,
+      incidenceDegSec: 0,
+      measuredEnergyWh: 0,
+      modeledEnergyWh: 0,
+      perfectPointingEnergyWh: 0,
+    })),
+  );
+  const accumulatorIndex = (operationIndex: number, illumination: DilLoadIlluminationState) =>
+    operationIndex * DIL_LOAD_ILLUMINATION_STATES.length
+      + DIL_LOAD_ILLUMINATION_STATES.indexOf(illumination);
   const evaluate = (index: number) => {
     const sunBody: Vector3 = [
       series.sunBodyXyz[index * 3],
@@ -426,6 +447,7 @@ export function analyzeDilEnergy(
         ? clamp(rawPowerValue, 0, 100) / 100 * unshadowedPerfectPowerW
         : rawPowerValue,
       operationIndex: series.operationIndex[index],
+      illumination: dilLoadIlluminationState(shadowFactor),
     };
   };
 
@@ -470,8 +492,10 @@ export function analyzeDilEnergy(
     peakMeasuredPowerW = Math.max(peakMeasuredPowerW, current.measuredPowerW);
     peakModeledPowerW = Math.max(peakModeledPowerW, current.modeledPowerW);
 
-    if (previous.operationIndex === current.operationIndex) {
-      const accumulator = operationAccumulators[previous.operationIndex];
+    const previousAccumulatorIndex = accumulatorIndex(previous.operationIndex, previous.illumination);
+    const currentAccumulatorIndex = accumulatorIndex(current.operationIndex, current.illumination);
+    if (previousAccumulatorIndex === currentAccumulatorIndex) {
+      const accumulator = operationAccumulators[previousAccumulatorIndex];
       accumulator.durationSec += dtSec;
       accumulator.sunlitSec += (previous.shadowFactor + current.shadowFactor) * 0.5 * dtSec;
       accumulator.incidenceDegSec += (previous.incidenceDeg + current.incidenceDeg) * 0.5 * dtSec;
@@ -479,9 +503,9 @@ export function analyzeDilEnergy(
       accumulator.modeledEnergyWh += modeledIntervalWh;
       accumulator.perfectPointingEnergyWh += perfectIntervalWh;
     } else {
-      operationTransitions += 1;
-      const previousAccumulator = operationAccumulators[previous.operationIndex];
-      const currentAccumulator = operationAccumulators[current.operationIndex];
+      if (previous.operationIndex !== current.operationIndex) operationTransitions += 1;
+      const previousAccumulator = operationAccumulators[previousAccumulatorIndex];
+      const currentAccumulator = operationAccumulators[currentAccumulatorIndex];
       const halfDurationSec = dtSec / 2;
       previousAccumulator.durationSec += halfDurationSec;
       previousAccumulator.sunlitSec += previous.shadowFactor * halfDurationSec;
@@ -500,12 +524,10 @@ export function analyzeDilEnergy(
   }
   const durationSec = Math.max(0, series.timeSec[count - 1] - series.timeSec[0]);
   const operations = operationAccumulators
-    .filter((operation) => operation.durationSec > 0)
     .map(({ incidenceDegSec, ...operation }) => ({
       ...operation,
-      averageIncidenceDeg: incidenceDegSec / operation.durationSec,
-    }))
-    .sort((a, b) => b.durationSec - a.durationSec);
+      averageIncidenceDeg: operation.durationSec > 0 ? incidenceDegSec / operation.durationSec : 0,
+    }));
   return {
     durationSec,
     measuredEnergyWh,
@@ -610,6 +632,7 @@ export function buildDilSimulation(
   referencePanelAxis?: SignedAxis,
   payloadBoresightAxis: SignedAxis = mission.nadirBodyAxis,
   operationMaxLoadsW?: Readonly<Record<string, number | undefined>>,
+  integrateOperationLoads = true,
 ): SimulationPoint[] {
   if (!records.length) return [];
   let batteryWh = power.batteryWh * clamp(power.initialSocPct / 100, 0, 1);
@@ -710,9 +733,12 @@ export function buildDilSimulation(
     const orbitNormal = normalize(cross(positionKm, velocityKmS), axes[2]);
     const betaDeg = Math.asin(clamp(dot(orbitNormal, sunVector), -1, 1)) * RAD;
     const dtSec = index === 0 ? 0 : Math.max(0, record.timeSec - records[index - 1].timeSec);
-    const operationLoadW = operationMaxLoadsW?.[record.spacecraftOperation];
-    if (operationMaxLoadsW && operationLoadW !== undefined && index > 0) {
-      const previousLoadW = operationMaxLoadsW[records[index - 1].spacecraftOperation];
+    const illumination = dilLoadIlluminationState(shadowFactor);
+    const operationLoadW = operationMaxLoadsW?.[dilOperationLoadKey(record.spacecraftOperation, illumination)];
+    if (integrateOperationLoads && operationMaxLoadsW && operationLoadW !== undefined && index > 0) {
+      const previousRecord = records[index - 1];
+      const previousIllumination = dilLoadIlluminationState(dilSunlightFactor(previousRecord.sunlitStatus));
+      const previousLoadW = operationMaxLoadsW[dilOperationLoadKey(previousRecord.spacecraftOperation, previousIllumination)];
       if (previousLoadW !== undefined && previousMeasuredPowerW !== undefined) {
         const intervalGenerationW = (previousMeasuredPowerW + measuredPowerW) * 0.5;
         const intervalLoadW = (Math.max(0, previousLoadW) + Math.max(0, operationLoadW)) * 0.5;

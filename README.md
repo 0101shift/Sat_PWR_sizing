@@ -13,7 +13,7 @@ ORBIT·PWR keeps the mission model, spacecraft definition, solar-array sizing, a
 | Workspace | Purpose |
 | --- | --- |
 | **Orbit View** | Propagate the mission, inspect lighting and attitude, replay operations, and visualize the complete spacecraft assembly in Earth orbit. |
-| **Power + Operations** | Compare generated power, battery state, six signed panel normals, and energy by spacecraft operation. For DIL input, the DIL-derived trace is primary and user-entered operation max loads produce a conservative OAP/SOC estimate. |
+| **Power + Operations** | Compare generated power, battery state, six signed panel normals, and energy by spacecraft operation. For DIL input, the DIL-derived trace is primary and separate sunlit/eclipse maximum loads produce a conservative OAP/SOC estimate. |
 | **Satellite Configuration** | Start from the EO inventory or create a custom spacecraft, assign body axes, attach payload/radio/power parts, configure the array, save locally, and deploy to the simulator. |
 
 ## Quick start on Windows
@@ -66,7 +66,7 @@ The power workspace presents the generation/battery timeline, signed-axis design
 
 With analytical simulation, the calculated array power is the main trace. With a DIL file loaded, the imported **DIL-derived/measured power becomes the primary trace** and modeled power remains a comparison. The dashboard also reports DIL energy as a percentage of modeled energy, making attitude-constrained generation directly visible.
 
-The chart cursor reports the current time, DIL/primary power, modeled comparison, perfect-pointing ceiling, SOC, and spacecraft operation. Operation names are preserved in the table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
+The chart includes the entered maximum load as a stepped trace. Its cursor reports the current time, DIL/primary generation, maximum load, net power, SOC, illumination/load state, and spacecraft operation. Operation names are preserved in the table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
 
 ## Satellite Configuration
 
@@ -148,7 +148,7 @@ The importer compares explicit reference incidence with incidence reconstructed 
 | **Modeled — comparison** | The selected mounted body normal intersected with each row's `SUN_BODY`, gated by illumination and corrected with the configured electrical/loss model. |
 | **Perfect-pointing ceiling** | The same EOL and loss model with attitude-incidence loss removed while retaining recorded eclipse and penumbra history. |
 
-Energy is trapezoid-integrated from every original row using its real timestamp interval before display decimation. This preserves totals for regular, irregular, and 10/20/50-second data. Default playback uses a constant 200 W orbit-average load and 1 kWh battery. DIL playback ignores that default load: enter a maximum load for every imported operation to calculate conservative load energy, worst-case OAP, net DIL energy, and battery SOC. These inputs remain in memory only and reset with a new DIL or page reload. The six-axis sweep re-evaluates the complete imported attitude/illumination history for every signed normal while keeping the DIL reference fixed.
+Energy is trapezoid-integrated from every original row using its real timestamp interval before display decimation. This preserves totals for regular, irregular, and 10/20/50-second data. Default playback uses a constant 200 W orbit-average load and 1 kWh battery. DIL playback ignores that default load: every imported operation is split into sunlit and eclipse maximum-load states (22 rows for 11 operations). Penumbra uses the eclipse load conservatively while retaining partial generation. Only states encountered by the DIL require a load value. The resulting profile drives load energy, worst-case OAP, net DIL energy, battery SOC, and the chart's stepped maximum-load trace. Inputs remain in memory only and reset with a new DIL or page reload. The six-axis sweep re-evaluates the complete imported attitude/illumination history for every signed normal while keeping the DIL reference fixed.
 
 ### Operation visualization
 

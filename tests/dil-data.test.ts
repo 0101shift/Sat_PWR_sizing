@@ -5,6 +5,8 @@ import {
   analyzeDilEnergy,
   analyzeDilOperationLoads,
   buildDilSimulation,
+  dilLoadIlluminationState,
+  dilOperationLoadKey,
   DIL_REQUIRED_FIELDS,
   DIL_TEMPLATE_FIELDS,
   parseDilData,
@@ -280,7 +282,10 @@ test("builds attitude-constrained replay power and preserves measured telemetry"
     parsed.powerSemantics,
     parsed.referencePanelAxis,
     mission.nadirBodyAxis,
-    { NOMINAL: 300, PAYLOAD: 300 },
+    {
+      [dilOperationLoadKey("NOMINAL", "SUNLIT")]: 300,
+      [dilOperationLoadKey("PAYLOAD", "ECLIPSE")]: 300,
+    },
   );
   assert.equal(points.length, 2);
   assert.deepEqual(points[0].panelNormalBody, [0, 1, 0]);
@@ -333,7 +338,8 @@ test("integrates dense DIL modeled, measured and perfect-pointing energy by oper
   assert.ok(Math.abs(analysis.perfectPointingEnergyWh - analysis.modeledEnergyWh) < 1e-9);
   assert.ok(Math.abs(analysis.modeledCapturePct - 100) < 1e-9);
   assert.equal(analysis.operationTransitions, 1);
-  assert.equal(analysis.operations.length, 2);
+  assert.equal(analysis.operations.length, 4);
+  assert.equal(analysis.operations.filter((operation) => operation.durationSec > 0).length, 2);
   assert.ok(Math.abs(analysis.operations.reduce((sum, operation) => sum + operation.measuredEnergyWh, 0) - analysis.measuredEnergyWh) < 1e-9);
   assert.ok(Math.abs(analysis.operations.reduce((sum, operation) => sum + operation.modeledEnergyWh, 0) - analysis.modeledEnergyWh) < 1e-9);
 });
@@ -341,16 +347,64 @@ test("integrates dense DIL modeled, measured and perfect-pointing energy by oper
 test("calculates conservative DIL load energy and OAP from per-operation maximum loads", () => {
   const parsed = parseDilData(csv, "actual.csv");
   const analysis = analyzeDilEnergy(parsed.energySeries, mission, power, parsed.epochMs);
-  const incomplete = analyzeDilOperationLoads(analysis, { NOMINAL: 100 });
+  const incomplete = analyzeDilOperationLoads(analysis, {
+    [dilOperationLoadKey("NOMINAL", "SUNLIT")]: 100,
+  });
   assert.equal(incomplete.complete, false);
-  assert.deepEqual(incomplete.missingOperations, ["PAYLOAD"]);
+  assert.deepEqual(incomplete.missingOperations, ["PAYLOAD · ECLIPSE"]);
   assert.equal(incomplete.loadEnergyWh, undefined);
 
-  const complete = analyzeDilOperationLoads(analysis, { NOMINAL: 100, PAYLOAD: 300 });
+  const complete = analyzeDilOperationLoads(analysis, {
+    [dilOperationLoadKey("NOMINAL", "SUNLIT")]: 100,
+    [dilOperationLoadKey("PAYLOAD", "ECLIPSE")]: 300,
+  });
   assert.equal(complete.complete, true);
   assert.ok(Math.abs((complete.loadEnergyWh ?? 0) - 3.3333333333) < 1e-6);
   assert.ok(Math.abs((complete.worstCaseAverageLoadW ?? 0) - 200) < 1e-9);
   assert.ok(Math.abs((complete.netEnergyWh ?? 0) + 1.25) < 1e-6);
+});
+
+test("splits each DIL operation into sunlit and eclipse load states", () => {
+  const splitCsv = `${DIL_REQUIRED_FIELDS.join(",")}
+0,"[6928.137,0,0]",100,NOMINAL,0,0,"[0,1,0]","[-1,0,0]",SUNLIT,"[0,0,0]",CLEAR,SAFE
+10,"[6928,75,0]",100,NOMINAL,0,0,"[0,1,0]","[-1,0,0]",PENUMBRA,"[0,0,0]",CLEAR,SAFE
+20,"[6927,150,0]",100,NOMINAL,0,0,"[0,1,0]","[-1,0,0]",ECLIPSE,"[0,0,0]",CLEAR,SAFE
+30,"[6925,225,0]",100,NOMINAL,0,0,"[0,1,0]","[-1,0,0]",SUNLIT,"[0,0,0]",CLEAR,SAFE`;
+  const parsed = parseDilData(splitCsv, "split-illumination.csv");
+  const analysis = analyzeDilEnergy(parsed.energySeries, mission, power, parsed.epochMs, parsed.powerSemantics);
+  const sunlit = analysis.operations.find((operation) => operation.illumination === "SUNLIT");
+  const eclipse = analysis.operations.find((operation) => operation.illumination === "ECLIPSE");
+
+  assert.equal(analysis.operations.length, 2);
+  assert.equal(sunlit?.durationSec, 10);
+  assert.equal(eclipse?.durationSec, 20);
+  assert.equal(dilLoadIlluminationState(1), "SUNLIT");
+  assert.equal(dilLoadIlluminationState(0.5), "ECLIPSE");
+  assert.equal(dilLoadIlluminationState(0), "ECLIPSE");
+  assert.ok(Math.abs((sunlit?.measuredEnergyWh ?? 0) - 100 * 10 / 3600) < 1e-9);
+  assert.ok(Math.abs((eclipse?.measuredEnergyWh ?? 0) - 100 * 20 / 3600) < 1e-9);
+
+  const loads = {
+    [dilOperationLoadKey("NOMINAL", "SUNLIT")]: 100,
+    [dilOperationLoadKey("NOMINAL", "ECLIPSE")]: 300,
+  };
+  const loadAnalysis = analyzeDilOperationLoads(analysis, loads);
+  assert.equal(loadAnalysis.complete, true);
+  assert.ok(Math.abs((loadAnalysis.loadEnergyWh ?? 0) - (100 * 10 + 300 * 20) / 3600) < 1e-9);
+  assert.ok(Math.abs((loadAnalysis.worstCaseAverageLoadW ?? 0) - 7000 / 30) < 1e-9);
+
+  const replay = buildDilSimulation(
+    parsed.records,
+    mission,
+    power,
+    parsed.epochMs,
+    parsed.powerSemantics,
+    parsed.referencePanelAxis,
+    mission.nadirBodyAxis,
+    loads,
+  );
+  assert.deepEqual(replay.map((point) => point.operationLoadW), [100, 300, 300, 100]);
+  assert.ok(Math.abs(replay[3].socPct - (50 - 4000 / 3600) / power.batteryWh * 100) < 1e-9);
 });
 
 test("DIL battery uses imported generation and operation loads instead of orbit-average load", () => {
@@ -364,7 +418,10 @@ test("DIL battery uses imported generation and operation loads instead of orbit-
     parsed.powerSemantics,
     parsed.referencePanelAxis,
     mission.nadirBodyAxis,
-    { NOMINAL: 0, PAYLOAD: 0 },
+    {
+      [dilOperationLoadKey("NOMINAL", "SUNLIT")]: 0,
+      [dilOperationLoadKey("PAYLOAD", "ECLIPSE")]: 0,
+    },
   );
   assert.ok(replay[1].socPct > replay[0].socPct);
 });
