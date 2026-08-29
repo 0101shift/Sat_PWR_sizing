@@ -7,6 +7,7 @@ const launcherUrl = new URL("../Start_Orbit_PWR_Dashboard.bat", import.meta.url)
 test("Windows launcher uses the recoverable first-run npm install flow", async () => {
   const launcher = await readFile(launcherUrl, "utf8");
 
+  assert.doesNotMatch(launcher, /(?<!\r)\n/, "batch launcher must retain Windows CRLF line endings");
   assert.match(launcher, /set "NODE_VERSION=24\.20\.0"/i);
   assert.match(launcher, /nodejs\.org\/dist\/v%NODE_VERSION%\/%NODE_DIST%\.zip/i);
   assert.match(launcher, /Security\.Cryptography\.SHA256/i);

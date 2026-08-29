@@ -1,16 +1,38 @@
 # ORBIT·PWR
 
-Local preliminary satellite solar-array sizing and telemetry replay dashboard.
+Local preliminary satellite solar-array sizing, orbit visualization, spacecraft configuration, and DIL telemetry replay dashboard.
 
-**Current baseline:** Revision 0 (`0.0.0`)
+**Current working baseline:** Revision 0 (`0.0.0`)
 
-## Run locally
+![ORBIT·PWR Orbit View](docs/images/orbit-view.jpg)
 
-On 64-bit Windows, double-click `Start_Orbit_PWR_Dashboard.bat`. The launcher is self-contained: when a compatible Node.js installation is unavailable, it downloads a private Node.js 24 LTS runtime from the official Node.js distribution, verifies its SHA-256 checksum, and stores it inside the project without requiring administrator access. It then downloads the dashboard packages, reconciles the npm lockfile when an older shared copy contains a stale one, starts the local development server on port 3000, and opens the dashboard. An internet connection is required only for these first-time downloads. If the dashboard is already running on port 3000, the launcher opens the existing instance instead of starting a second copy.
+## What ORBIT·PWR does
 
-No separate Node.js or package installation is required. A preinstalled Node.js 22.13-or-newer runtime with npm is reused when available; otherwise the project-private runtime is used. Both `.orbit-pwr-runtime` and `node_modules` can be deleted to reclaim space and will be restored automatically the next time the launcher runs.
+ORBIT·PWR keeps the mission model, spacecraft definition, solar-array sizing, and actual-data replay in one local dashboard. It is intended for preliminary engineering and design comparison—not flight qualification.
 
-Run only one launcher window at a time. Development mode is used intentionally so edits can update safely without invalidating the interactive 3D viewer's JavaScript files.
+| Workspace | Purpose |
+| --- | --- |
+| **Orbit View** | Propagate the mission, inspect lighting and attitude, replay operations, and visualize the complete spacecraft assembly in Earth orbit. |
+| **Power + Operations** | Compare generated power, battery state, six signed panel normals, and energy by spacecraft operation. For DIL input, the DIL-derived trace is the primary series. |
+| **Satellite Configuration** | Start from the EO inventory or create a custom spacecraft, assign body axes, attach payload/radio/power parts, configure the array, save locally, and deploy to the simulator. |
+
+## Quick start on Windows
+
+1. Download or clone this repository.
+2. Extract it to a normal writable folder if you downloaded a ZIP.
+3. Double-click **`Start_Orbit_PWR_Dashboard.bat`**.
+4. The dashboard opens at [http://localhost:3000](http://localhost:3000).
+
+The launcher is designed to be the only setup step:
+
+- reuses Node.js 22.13 or newer when it is already installed;
+- otherwise downloads a project-private Node.js 24 LTS runtime for Windows x64 or ARM64;
+- verifies the official Node.js SHA-256 checksum before use;
+- installs or reconciles npm packages automatically, including recovery from a stale lockfile that would otherwise raise `npm EUSAGE`;
+- needs no administrator access and does not modify the system Node.js installation;
+- reuses an existing ORBIT·PWR instance when port 3000 is already active.
+
+Internet access is needed only for first-time runtime/package downloads. The generated `.orbit-pwr-runtime` and `node_modules` folders can be deleted to reclaim space; the launcher restores them on the next run. Run one launcher window at a time.
 
 For development with Node.js 22.13 or newer:
 
@@ -19,35 +41,70 @@ npm install
 npm run dev
 ```
 
-### EO satellite inventory prototype
+## Mission simulation
 
-Open `http://localhost:3000/satellite-inventory` after starting the local dashboard. The same satellite inventory and custom-build workspace are also available through the dashboard's Satellite Configuration tab.
+### Orbit View
 
-The initial library contains three representative, non-flight-qualified EO concepts: **EO Scout 12U**, **EO Meridian 150**, and **EO Atlas 600**. Each includes editable geometry, mass, body-frame assignments, solar-array rigging, orbit defaults, cell/string configuration, load, and battery data. The procedural 3D preview supports unrestricted rotation, zoom, pan, fit/reset, body-axis display, and array deployment playback. Drafts can be duplicated, stored in browser-local storage, imported from JSON, and exported as inventory-schema v1 JSON.
+Orbit View combines the propagated orbit, Earth/Sun lighting, eclipse state, spacecraft attitude, operation effects, and live power summary. The deployed-spacecraft card opens the matching Satellite Configuration entry.
 
-STEP tessellation and interactive part/axis/joint assignment are reserved for the next inventory phase, after the default data schema and trial models are approved.
+Highlights:
 
-### Local satellite integration lab
+- LEO, SSO, and GEO scenarios with altitude, inclination, LTAN, eccentricity, argument of perigee, true anomaly, epoch, and duration controls;
+- Kepler propagation, secular J2 RAAN/perigee drift, analytical Sun position, Sun–Earth distance correction, and conical umbra/penumbra;
+- NASA Blue Marble Earth texture, Earth-fixed references, illumination-coded orbit path, and one-revolution trail;
+- orbit-follow and free 3D views with rotate, pan, zoom, reset, and visual orbit-radius controls;
+- 1×, 5×, 10×, 25×, and 50× playback;
+- rigid whole-spacecraft attitude motion during DIL replay—the bus and attached parts retain their configured mounts;
+- green imaging footprint emitted from the installed optical payload and blue downlink beam emitted from the installed X/Ka-band radio dish;
+- shortest-path attitude interpolation between operation states, avoiding unnecessary long rotations.
 
-Open `http://localhost:3000/satellite-integration-lab` to test an inventory spacecraft in an isolated Three.js Earth-orbit scene. The lab uses the simulator's circular-orbit and LVLH frame equations to map the configured signed velocity axis to the orbit tangent and the configured signed nadir axis to Earth center. It reports velocity, nadir, frame-orthogonality, payload-nadir, and panel-Sun angles while the spacecraft moves through the orbit.
+### Power + Operations
 
-The integration lab is deliberately separate from the root sizing simulator. It reads locally saved inventory configurations but does not change the final dashboard's spacecraft renderer, inputs, or calculations.
+![ORBIT·PWR Power and Operations](docs/images/power-operations.jpg)
 
-## Model capabilities
+The power workspace presents the generation/battery timeline, signed-axis design sweep, engineering totals, operation-level energy table, and live condition tiles in a responsive layout.
 
-- LEO, SSO, and GEO orbit scenarios with semi-major-axis altitude, eccentricity, argument of perigee, true anomaly at epoch, and a minimum two-day analysis span
-- Kepler propagation, secular J2 RAAN/perigee drift, analytical Sun position, Sun–Earth distance correction, and conical umbra/penumbra calculation
-- fixed spacecraft-mounted array geometry, signed active-cell face, Euler mounting refinement, and configurable spacecraft attitude
-- AZUR 3G30-Advanced and 4G32-Advanced 4×8/HP catalog values, EOL MPP power, string topology, packaging efficiency, constant-temperature Pmp correction, pointing uncertainty, angular response, MPPT/harness efficiency, mismatch/diode/contamination/self-shadowing losses, load, and battery sizing
-- NASA Blue Marble Earth texture, Earth-fixed reference grid, scene-locked orbit/camera transforms, arcball 3D rotation, pan/zoom/reset controls, overhead racing-style Satellite Lock with +V toward the top of the view, adjustable visual orbit-radius exaggeration, illumination-coded orbit path, a tapered one-revolution trail, and interactive spacecraft-face selection
-- 1×, 5×, 10×, 25×, and 50× playback with propulsion, transition/slew, green imaging beams, and blue geopointing beams
-- CSV export and printable report
+With analytical simulation, the calculated array power is the main trace. With a DIL file loaded, the imported **DIL-derived/measured power becomes the primary trace** and modeled power remains a comparison. The dashboard also reports DIL energy as a percentage of modeled energy, making attitude-constrained generation directly visible.
 
-This is a preliminary design model. The detailed limitations and assumptions are also shown at the bottom of the dashboard.
+The chart cursor reports the current time, DIL/primary power, modeled comparison, perfect-pointing ceiling, SOC, and spacecraft operation. Operation names are preserved in the table so imaging, GS pointing, propulsion, transition, and mission-specific states can be compared without being merged.
+
+## Satellite Configuration
+
+![ORBIT·PWR Satellite Configuration](docs/images/satellite-configuration.jpg)
+
+The configuration workspace separates validated inventory entries from editable custom builds:
+
+- **EO Platforms** contains EO Scout 12U, EO Meridian 150, and EO Atlas 600 as representative, non-flight-qualified starting concepts. Identity and physical configuration are read-only here.
+- **Custom Build** is the editing workspace for spacecraft identity, bus geometry, body-frame assignments, installed subsystems, solar-array rigging, cell/string configuration, load, and battery data.
+- Inventory entries can be duplicated as custom builds, imported/exported as inventory-schema v1 JSON, saved to browser-local storage, and deployed to Orbit View.
+- The 3D preview supports unrestricted rotation, zoom, pan, fit/reset, axis display, and array-deployment playback.
+- **Save locally** stores the build; **Deploy to orbit** applies the selected build to the mission simulator.
+
+Direct routes after the launcher starts:
+
+- Main dashboard: [http://localhost:3000](http://localhost:3000)
+- EO inventory: [http://localhost:3000/satellite-inventory](http://localhost:3000/satellite-inventory)
+- Integration lab: [http://localhost:3000/satellite-integration-lab](http://localhost:3000/satellite-integration-lab)
+
+The integration lab is an isolated Three.js validation scene. It maps the configured signed velocity axis to the orbit tangent and the signed nadir axis to Earth center, then reports velocity, nadir, frame orthogonality, payload-nadir, and panel-Sun angles without changing the main dashboard configuration.
+
+## Electrical model
+
+The preliminary solar-array model includes:
+
+- AZUR 3G30-Advanced and 4G32-Advanced 4×8/HP catalog values;
+- BOL/EOL MPP rating, series/parallel string topology, active area, and packaging efficiency;
+- temperature correction, pointing uncertainty, angular response, and Sun-distance correction;
+- MPPT/harness, optical, mismatch, diode, contamination, and self-shadowing losses;
+- constant spacecraft load, battery capacity, charge/discharge evolution, and minimum SOC;
+- six-axis (`±X`, `±Y`, `±Z`) energy sweep over the complete attitude and illumination history;
+- CSV export and a printable engineering report.
 
 ## DIL actual-data replay
 
-Use **Actual data replay → Upload DIL file**. Files remain in the browser and are not uploaded to a server. CSV, TSV, and JSON are supported. A valid file contains the core fields below; the final two universal panel-reference fields are recommended but may be replaced by a legacy signed-axis field or automatic inference:
+Open **Actual data replay → Upload DIL file**. CSV, TSV, and JSON are parsed locally in the browser and are not uploaded to a server.
+
+A valid input contains these core fields. The final two universal panel-reference fields are recommended; legacy signed-axis columns and automatic inference remain supported.
 
 ```text
 TIME
@@ -66,39 +123,41 @@ SOLAR_PANEL_AXIS
 SUN_PANEL_INCIDENCE
 ```
 
-Conventions:
+Use **Download template** in the dashboard for a ready-to-fill file.
 
-- `TIME`: elapsed seconds, ISO-8601, or `DD-MM-YYYY HH:mm[:ss]` using a 24-hour clock, for example `01-01-2028 05:30`. AM/PM timestamps remain supported. For minute-only timestamps, set the optional import interval to the known cadence (for example 10, 20, or 50 seconds); leave it blank to infer sub-minute spacing.
-- `SATELLITE_POSITION`: Earth-centred kilometres or metres; metre-scale vectors are converted automatically and used directly for satellite location
-- `LATITUDE`, `LONGITUDE`: degrees
-- `SUN_BODY`, `EARTH_BODY`: body-frame XYZ vectors
-- `ATTITUDE_RPY`: degrees, interpreted as ZYX roll-pitch-yaw body-to-ECI
-- `SOLAR_PANEL_AXIS`: signed body normal `+X`, `-X`, `+Y`, `-Y`, `+Z`, or `-Z` represented by the imported power reference
-- `SUN_PANEL_INCIDENCE`: Sun-incidence angle in degrees for that reference normal
-- `SOLAR_POWER_GENERATED`: either measured watts or a 0–100 generation factor. A factor is detected when it closely follows `100 × max(0, cos(SUN_PANEL_INCIDENCE)) × SUNLIT_STATUS`; it is then converted to equivalent watts using the configured corrected EOL array rating.
-- CSV vector cells must be quoted, for example `"[6928.137,0,0]"`
+### Input conventions
 
-`SOLAR_PANEL_AXIS` and `SUN_PANEL_INCIDENCE` are the recommended universal fields rather than hard-coding +Y. Existing signed legacy columns such as `sun_+Y_panels`, `sun_-X_panels`, and `sun_+Z_panels` remain supported. If no panel-axis field is present and `SOLAR_POWER_GENERATED` is a 0–100 factor, Auto mode compares all six body normals against `SUN_BODY` and selects the best-correlated reference axis. The import control also provides a manual signed-axis override for ambiguous legacy data.
+- `TIME`: elapsed seconds, ISO-8601, or `DD-MM-YYYY HH:mm[:ss]` on a 24-hour clock. AM/PM remains supported. For minute-only timestamps, provide the known row interval or leave it blank for sub-minute inference.
+- `SATELLITE_POSITION`: Earth-centred XYZ in kilometres or metres; metre-scale vectors are detected and converted automatically.
+- `SUN_BODY`, `EARTH_BODY`: body-frame XYZ vectors.
+- `ATTITUDE_RPY`: degrees, interpreted as ZYX roll-pitch-yaw body-to-ECI.
+- `SOLAR_PANEL_AXIS`: `+X`, `-X`, `+Y`, `-Y`, `+Z`, or `-Z` for the imported power reference normal.
+- `SUN_PANEL_INCIDENCE`: Sun-incidence angle in degrees for that normal.
+- `SOLAR_POWER_GENERATED`: measured watts or a detected 0–100 cosine-like generation factor. A detected factor is converted to equivalent watts using the corrected unshadowed EOL array rating.
+- CSV vector cells must be quoted, for example `"[6928.137,0,0]"`.
 
-For an explicitly declared reference axis with zero mounting rotation, its imported `SUN_PANEL_INCIDENCE` history is authoritative for that axis. The importer independently compares those angles with the incidence reconstructed from `SUN_BODY` and reports mean error plus the percentage of samples differing by more than 5°. When they conflict, the declared reference axis can still be replayed, but other-axis comparisons based on `SUN_BODY` are flagged as physically inconsistent. A 0–100 `SOLAR_POWER_GENERATED` column is converted as a generation factor only when it correlates with the declared incidence history; otherwise it remains interpreted as watts and a diagnostic warning is shown.
+Legacy columns such as `sun_+Y_panels`, `sun_-X_panels`, and `sun_+Z_panels` remain supported. If the axis is absent and `SOLAR_POWER_GENERATED` is a 0–100 factor, Auto mode compares all six body normals against `SUN_BODY` and selects the best-correlated axis. A manual signed-axis override is available for ambiguous files.
 
-The replay maps `SATELLITE_POSITION` into a fixed Earth-centred scene. The Earth and Sun markers stay locked; only the satellite changes position. `SUN_BODY`, `EARTH_BODY`, and the spacecraft axes use the `ATTITUDE_RPY` transformation. The transformed Sun direction updates illumination, the terminator, and shadow cone without moving the Sun or Earth markers.
+The importer compares explicit reference incidence with incidence reconstructed from `SUN_BODY`. It reports mean error and the share of samples that differ by more than 5%. The declared axis can still be replayed when they disagree, but cross-axis comparisons are marked physically inconsistent until the source geometry is corrected.
 
-DIL power analysis has three deliberately separate results:
+### Three distinct power results
 
-- **Modeled power/energy:** the selected and mounted signed body normal (`±X`, `±Y`, or `±Z`) intersected with each row's body-frame `SUN_BODY`, gated by `SUNLIT_STATUS`, then corrected with the configured EOL cell/string, solar-distance, temperature, pointing uncertainty, MPPT/harness, optical, mismatch, diode, self-shadowing, and system losses
-- **DIL-derived or measured power/energy:** an axis-independent imported reference associated with the declared, detected, or overridden reference axis. A detected 0–100 `SOLAR_POWER_GENERATED` factor is scaled by the corrected unshadowed EOL array rating; otherwise the imported value is retained directly as measured watts.
-- **Perfect-pointing ceiling:** the same EOL and loss model with zero attitude-incidence loss, while retaining the recorded eclipse/penumbra history
+| Result | Meaning |
+| --- | --- |
+| **DIL-derived / measured — primary** | The imported reference associated with the declared, detected, or overridden panel axis. A detected 0–100 factor is scaled to the corrected EOL array rating; otherwise the imported value remains measured watts. |
+| **Modeled — comparison** | The selected mounted body normal intersected with each row's `SUN_BODY`, gated by illumination and corrected with the configured electrical/loss model. |
+| **Perfect-pointing ceiling** | The same EOL and loss model with attitude-incidence loss removed while retaining recorded eclipse and penumbra history. |
 
-Energy is trapezoid-integrated over every original DIL row and its actual timestamp interval before replay display decimation. This handles 10/20/50-second and irregular intervals without treating the reduced graphics samples as the energy record. Battery SOC is derived from the modeled operation-constrained power and configured load. The operation table attributes modeled, measured, and ceiling energy to the exact `SPACECRAFT_OPERATION` values, which makes imaging, GS pointing, propulsion, transition, and other attitude regimes directly comparable. Velocity is reconstructed from adjacent replay positions for visualization.
+Energy is trapezoid-integrated from every original row using its real timestamp interval before display decimation. This preserves totals for regular, irregular, and 10/20/50-second data. Battery SOC is driven by operation-constrained modeled power and configured load. The six-axis sweep re-evaluates the complete imported attitude/illumination history for every signed normal while keeping the DIL reference fixed.
 
-When a DIL is loaded, the six-axis sweep recomputes the full imported `SUN_BODY` and illumination history independently for every signed cell-normal axis. Selecting an axis updates the modeled power, integrated energy, battery profile, operation breakdown, and current incidence. The DIL-derived reference remains fixed at its imported reference axis, allowing any selected-axis result to be compared against the attitude history for which the DIL was generated.
+### Operation visualization
 
-The analytical Sun and shadow direction are initialized from mission epoch and held fixed in the inertial scene; LTAN determines the SSO orbital-plane orientation relative to that Sun. For DIL replay, the first absolute `TIME` initializes the same global Sun direction, so attitude changes during `GSPOINTING_X`, `IMAGING_X`, or `TRANSITION` cannot move the Earth shadow. The Earth texture is initialized from GMST and rotates at the sidereal rate while the satellite propagates through the fixed illumination geometry. Earth-fixed reference curves and the propagated orbit use the same camera transform, so orbit rotation and pan remain locked to the globe as one scene.
+- Operation names beginning with `GSPOINTING` activate a blue animated Earth-directed beam from the installed communication dish.
+- Imaging/capture operation names activate a green footprint from the installed optical payload.
+- `PAYLOAD_EARTH` and `PAYLOAD_SUN` angles drive target direction.
+- Operation effects crossfade over 520 ms; attitude changes use the shortest angular path.
 
-Every operation whose name begins with `GSPOINTING` uses a blue animated Earth-directed beam, regardless of its suffix; for example `GSPOINTING_X`, `GSPOINTING_PAYLOAD`, and `GSPOINTING_123`. `IMAGING_X` uses a green beam. Operation effects crossfade over 520 ms when replay changes state. The Orbit radius control exaggerates displayed altitude only; it does not change the configured orbital altitude or any orbital/power calculation.
-
-Large files are reduced to a maximum baseline of 60,000 graphical replay samples so multi-day playback remains responsive. This reduction does not affect energy totals. Spacecraft-operation and illumination transitions are prioritized during reduction, while chart and orbit paths use an additional display-only decimation. Use **Download template** in the dashboard for a ready-to-fill sample file.
+Large files are reduced to at most 60,000 graphical replay samples. This does not alter energy totals: operation and illumination transitions are prioritized, while chart/orbit paths use additional display-only decimation.
 
 ## Verification
 
@@ -107,4 +166,8 @@ npm run lint
 npm test
 ```
 
-The test suite covers orbital-period references, eclipse discrimination, power/battery bounds, DIL parsing, DIL attitude geometry, dense timestamp-aware modeled/measured/ceiling energy integration, operation attribution, measured-power preservation, and server rendering.
+`npm test` builds the app and exercises rendered routes, the launcher, orbital references, eclipse discrimination, power/battery bounds, DIL parsing and attitude geometry, timestamp-aware energy integration, operation attribution, measured-power preservation, CSV export, spacecraft inventory behavior, rigid assemblies, and operation-beam source placement.
+
+## Scope
+
+ORBIT·PWR is a preliminary design and replay tool. It is not a flight-dynamics, thermal, radiation, structural, or power-electronics qualification environment. Validate mission-critical results with the appropriate high-fidelity analysis and test chain.
