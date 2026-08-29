@@ -18,6 +18,7 @@ import {
   type OrbitPreset,
   type PowerConfig,
   type SignedAxis,
+  type SimulationMetrics,
   type SimulationPoint,
   type Vector3,
 } from "./lib/orbit-model";
@@ -1899,6 +1900,68 @@ function OrbitDilPowerOverlay({
   );
 }
 
+function CalculationToolkitContent({
+  metrics,
+  power,
+  corrections,
+  dilData,
+  dilPowerIsFactor,
+}: {
+  metrics: SimulationMetrics;
+  power: PowerConfig;
+  corrections: ReturnType<typeof arrayPowerCorrectionFactors>;
+  dilData: ParsedDilData | null;
+  dilPowerIsFactor: boolean;
+}) {
+  return (
+    <div className="calculation-toolkit-body">
+      <section>
+        <h3>Array power audit</h3>
+        <code>P<sub>BOL</sub> = Vmp<sub>BOL</sub> × Imp<sub>BOL</sub> × series × parallel</code>
+        <code>P<sub>EOL</sub> = Vmp<sub>EOL</sub> × Imp<sub>EOL</sub> × series × parallel</code>
+        <p>Raw BOL {metrics.bolArrayPowerW.toFixed(1)} W · raw EOL {metrics.eolArrayPowerW.toFixed(1)} W</p>
+        <code>P<sub>net</sub> = P<sub>rating</sub> × R<sub>temp</sub> × R<sub>electrical</sub> × R<sub>optical</sub> × R<sub>incidence</sub> × R<sub>irradiance</sub> × sunlight</code>
+        <p>Normal-sun net BOL {metrics.bolNetArrayPowerW.toFixed(1)} W · net EOL {metrics.eolNetArrayPowerW.toFixed(1)} W</p>
+      </section>
+      <section>
+        <h3>Current retention factors</h3>
+        <dl>
+          <div><dt>Temperature</dt><dd>{(corrections.temperatureRetention * 100).toFixed(2)}%</dd></div>
+          <div><dt>Electrical</dt><dd>{(corrections.electricalRetention * 100).toFixed(2)}%</dd></div>
+          <div><dt>Optical</dt><dd>{(corrections.opticalRetention * 100).toFixed(2)}%</dd></div>
+          <div><dt>Pointing at nominal 0°</dt><dd>{(corrections.incidenceRetention * 100).toFixed(2)}%</dd></div>
+          <div><dt>Irradiance / distance</dt><dd>{(corrections.irradianceRetention * 100).toFixed(2)}%</dd></div>
+          <div><dt>Radiation, EOL / BOL</dt><dd>{metrics.radiationRetentionPct.toFixed(2)}%</dd></div>
+        </dl>
+        <p>Electrical combines MPPT, harness, mismatch, blocking-diode, and other system losses. Optical combines contamination and self-shadowing.</p>
+      </section>
+      <section>
+        <h3>Energy, load & battery</h3>
+        <code>E = Σ ((P<sub>i</sub> + P<sub>i+1</sub>) / 2) × Δt / 3600</code>
+        <code>ΔSOC = (P<sub>generation</sub> − P<sub>load</sub>) × Δt / (battery Wh × 3600) × 100</code>
+        <p>Analytical playback applies the {power.averageLoadW.toFixed(0)} W orbit-average load continuously. DIL playback ignores it and applies each operation/illumination maximum load.</p>
+        <p>Penumbra retains fractional generation but conservatively uses the eclipse load. Battery charge is bounded to 0–100%; charge/discharge conversion losses are not modeled separately.</p>
+      </section>
+      <section>
+        <h3>DIL interpretation</h3>
+        <p>{dilData ? dilPowerIsFactor ? `SOLAR_POWER_GENERATED is detected as a 0–100 ${dilData.referencePanelAxis ?? "reference-axis"} generation factor and scaled by corrected EOL array power.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts." : "No DIL is loaded. On import, SOLAR_POWER_GENERATED is treated as watts unless a valid 0–100 cosine-like reference-axis factor is detected."}</p>
+        <p>Modeled power uses the imported attitude/Sun geometry, the selected panel normal, eclipse fraction, EOL cell point, and all configured losses. Perfect power preserves eclipse and losses but fixes incidence at 0°.</p>
+        <p>DIL and modeled energy use trapezoidal integration over every original timestamp; the visible replay may be decimated only for rendering.</p>
+      </section>
+      <section>
+        <h3>Geometry & scope assumptions</h3>
+        <ul>
+          <li>Two-body Kepler propagation with J2 RAAN/argument-of-perigee drift.</li>
+          <li>Conical eclipse with a linear penumbra transition; one locked inertial Sun direction per run.</li>
+          <li>Constant operating temperature and equivalent constant self-shadowing.</li>
+          <li>Packaging efficiency determines installed area; it is not applied again as an electrical watt loss.</li>
+          <li>No albedo, spectral response, thermal transient, detailed CAD shadowing, or transient MPPT limit.</li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
 function NumberField({
   label,
   value,
@@ -2039,6 +2102,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const [dilReferenceAxisOverride, setDilReferenceAxisOverride] = useState<"AUTO" | SignedAxis>("AUTO");
   const [dilOperationMaxLoadInputs, setDilOperationMaxLoadInputs] = useState<Record<string, string>>({});
   const [powerPlotVisibility, setPowerPlotVisibility] = useState<PowerPlotVisibility>(DEFAULT_POWER_PLOT_VISIBILITY);
+  const [calculationToolkitOpen, setCalculationToolkitOpen] = useState(false);
   const [dilOperationSort, setDilOperationSort] = useState<{ key: DilOperationSortKey; direction: SortDirection }>({
     key: "operation",
     direction: "ascending",
@@ -2091,13 +2155,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   }, [dilPoints, illuminationEpochMs]);
   const activeIndex = clamp(currentIndex, 0, displayPoints.length - 1);
   const current = displayPoints[activeIndex];
-  const visualPanelIncidenceDeg = Math.acos(clamp(
-    dot(normalize(current.panelNormal), sceneSunVector),
-    -1,
-    1,
-  )) * 180 / Math.PI;
-  const sunLockDriftDeg = current.attitudeCorrectionDeg
-    ?? Math.acos(clamp(dot(normalize(current.sunVector), sceneSunVector), -1, 1)) * 180 / Math.PI;
   const currentDilRecord = dilData?.records[activeIndex] ?? null;
   const dilAxisSweep = useMemo(
     () => dilData ? analyzeDilAxisSweep(dilData.energySeries, mission, power, dilData.epochMs, dilData.referencePanelAxis) : null,
@@ -2185,15 +2242,18 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   const bestAxis = designAxes.find((axis) => axis.rank === 1) ?? designAxes[0];
   const selectedAxis = designAxes.find((axis) => axis.axis === mission.panelFacingAxis) ?? designAxes[0];
   const maxAxisEnergy = Math.max(...designAxes.map((axis) => axis.energyPerOrbitWh), 1);
-  const illuminationState = current.shadowFactor <= 0.02
-    ? "Umbra"
-    : current.shadowFactor < 0.98
-      ? "Penumbra"
-      : "Sunlight";
   const maximumSafeEccentricity = Math.min(
     0.8,
     Math.max(0, (mission.altitudeKm - 160) / (EARTH_RADIUS_KM + mission.altitudeKm)),
   );
+  useEffect(() => {
+    if (!calculationToolkitOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCalculationToolkitOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [calculationToolkitOpen]);
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
@@ -2735,54 +2795,18 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
           </section>
 
           <section className="control-section calculation-toolkit">
-            <details>
-              <summary><span>04</span><b>Calculation toolkit</b><em>Formulas & assumptions</em></summary>
-              <div className="calculation-toolkit-body">
-                <section>
-                  <h3>Array power audit</h3>
-                  <code>P<sub>BOL</sub> = Vmp<sub>BOL</sub> × Imp<sub>BOL</sub> × series × parallel</code>
-                  <code>P<sub>EOL</sub> = Vmp<sub>EOL</sub> × Imp<sub>EOL</sub> × series × parallel</code>
-                  <p>Raw BOL {result.metrics.bolArrayPowerW.toFixed(1)} W · raw EOL {result.metrics.eolArrayPowerW.toFixed(1)} W</p>
-                  <code>P<sub>net</sub> = P<sub>rating</sub> × R<sub>temp</sub> × R<sub>electrical</sub> × R<sub>optical</sub> × R<sub>incidence</sub> × R<sub>irradiance</sub> × sunlight</code>
-                  <p>Normal-sun net BOL {result.metrics.bolNetArrayPowerW.toFixed(1)} W · net EOL {result.metrics.eolNetArrayPowerW.toFixed(1)} W</p>
-                </section>
-                <section>
-                  <h3>Current retention factors</h3>
-                  <dl>
-                    <div><dt>Temperature</dt><dd>{(referencePowerCorrections.temperatureRetention * 100).toFixed(2)}%</dd></div>
-                    <div><dt>Electrical</dt><dd>{(referencePowerCorrections.electricalRetention * 100).toFixed(2)}%</dd></div>
-                    <div><dt>Optical</dt><dd>{(referencePowerCorrections.opticalRetention * 100).toFixed(2)}%</dd></div>
-                    <div><dt>Pointing at nominal 0°</dt><dd>{(referencePowerCorrections.incidenceRetention * 100).toFixed(2)}%</dd></div>
-                    <div><dt>Irradiance / distance</dt><dd>{(referencePowerCorrections.irradianceRetention * 100).toFixed(2)}%</dd></div>
-                    <div><dt>Radiation, EOL / BOL</dt><dd>{result.metrics.radiationRetentionPct.toFixed(2)}%</dd></div>
-                  </dl>
-                  <p>Electrical combines MPPT, harness, mismatch, blocking-diode, and other system losses. Optical combines contamination and self-shadowing.</p>
-                </section>
-                <section>
-                  <h3>Energy, load & battery</h3>
-                  <code>E = Σ ((P<sub>i</sub> + P<sub>i+1</sub>) / 2) × Δt / 3600</code>
-                  <code>ΔSOC = (P<sub>generation</sub> − P<sub>load</sub>) × Δt / (battery Wh × 3600) × 100</code>
-                  <p>Analytical playback applies the {power.averageLoadW.toFixed(0)} W orbit-average load continuously. DIL playback ignores it and applies each operation/illumination maximum load.</p>
-                  <p>Penumbra retains fractional generation but conservatively uses the eclipse load. Battery charge is bounded to 0–100%; charge/discharge conversion losses are not modeled separately.</p>
-                </section>
-                <section>
-                  <h3>DIL interpretation</h3>
-                  <p>{dilData ? dilPowerIsFactor ? `SOLAR_POWER_GENERATED is detected as a 0–100 ${dilData.referencePanelAxis ?? "reference-axis"} generation factor and scaled by corrected EOL array power.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts." : "No DIL is loaded. On import, SOLAR_POWER_GENERATED is treated as watts unless a valid 0–100 cosine-like reference-axis factor is detected."}</p>
-                  <p>Modeled power uses the imported attitude/Sun geometry, the selected panel normal, eclipse fraction, EOL cell point, and all configured losses. Perfect power preserves eclipse and losses but fixes incidence at 0°.</p>
-                  <p>DIL and modeled energy use trapezoidal integration over every original timestamp; the visible replay may be decimated only for rendering.</p>
-                </section>
-                <section>
-                  <h3>Geometry & scope assumptions</h3>
-                  <ul>
-                    <li>Two-body Kepler propagation with J2 RAAN/argument-of-perigee drift.</li>
-                    <li>Conical eclipse with a linear penumbra transition; one locked inertial Sun direction per run.</li>
-                    <li>Constant operating temperature and equivalent constant self-shadowing.</li>
-                    <li>Packaging efficiency determines installed area; it is not applied again as an electrical watt loss.</li>
-                    <li>No albedo, spectral response, thermal transient, detailed CAD shadowing, or transient MPPT limit.</li>
-                  </ul>
-                </section>
-              </div>
-            </details>
+            <button
+              type="button"
+              className="calculation-toolkit-launch"
+              aria-haspopup="dialog"
+              aria-controls="calculation-toolkit-window"
+              aria-expanded={calculationToolkitOpen}
+              onClick={() => setCalculationToolkitOpen(true)}
+            >
+              <span>04</span>
+              <b>Calculation toolkit</b>
+              <em>Open formulas & assumptions ↗</em>
+            </button>
           </section>
         </aside>
 
@@ -2847,30 +2871,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
                   operation={currentDilRecord?.spacecraftOperation}
                 />
               )}
-              <div className="orbit-bottom-left-overlays">
-                <div className="orbit-deployed-model" aria-live="polite">
-                  <b>{deployedSpacecraft.name.toUpperCase()}</b>
-                  <span>Deployed configuration snapshot · live mission attitude</span>
-                </div>
-                <div className="canvas-readout">
-                  <span className={`illumination-state state-${illuminationState.toLowerCase()}`}><i /> {illuminationState} {Math.round(current.shadowFactor * 100)}%</span>
-                  <span>β {current.betaDeg.toFixed(1)}°</span>
-                  <span>PANEL {mission.panelFacingAxis} · VIS θ {visualPanelIncidenceDeg.toFixed(1)}° · PWR θ {current.incidenceDeg.toFixed(1)}°</span>
-                  <span>{dilData ? "SUN: DIL BODY→ECI LOCKED" : "SUN / SHADOW EPOCH-LOCKED"}</span>
-                  <span>EARTH / ORBIT VIEW-LOCKED</span>
-                  {dilData && <span>ATTITUDE_RPY · SUN-LOCK CORR {sunLockDriftDeg.toFixed(2)}°</span>}
-                  {currentDilRecord && ["IMAGING", "GEOPOINTING"].includes(classifyOperation(currentDilRecord.spacecraftOperation)) && (
-                    <span>PAYLOAD E {current.payloadEarthAngleDeg?.toFixed(1) ?? "—"}° · SUN {current.payloadSunAngleDeg?.toFixed(1) ?? "—"}° · RES {current.payloadPointingResidualDeg?.toFixed(2) ?? "—"}°</span>
-                  )}
-                  {currentDilRecord && <span className={`operation-pill operation-${classifyOperation(currentDilRecord.spacecraftOperation).toLowerCase()}`}>{classifyOperation(currentDilRecord.spacecraftOperation)}</span>}
-                </div>
-                <div className="orbit-legend" aria-label="Orbit illumination legend">
-                  <span><i className="legend-sunlight" />Sunlight</span>
-                  <span><i className="legend-penumbra" />Penumbra</span>
-                  <span><i className="legend-umbra" />Umbra</span>
-                  <span className="earth-credit">Earth: NASA Blue Marble</span>
-                </div>
-              </div>
             </div>
             <div className="timeline-control">
               <button type="button" className="play-button" aria-label={playing ? "Pause simulation" : "Play simulation"} onClick={() => setPlaying((value) => !value)}>
@@ -3111,6 +3111,39 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
           </div>
         </section>
       </div>
+      {calculationToolkitOpen && (
+        <div className="calculation-toolkit-backdrop">
+          <button
+            type="button"
+            className="calculation-toolkit-dismiss"
+            aria-label="Close calculation toolkit window"
+            onClick={() => setCalculationToolkitOpen(false)}
+          />
+          <section
+            id="calculation-toolkit-window"
+            className="calculation-toolkit-window"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="calculation-toolkit-title"
+          >
+            <header>
+              <div>
+                <span>ENGINEERING REFERENCE</span>
+                <h2 id="calculation-toolkit-title">Calculation toolkit</h2>
+                <p>Active formulas, inputs, loss factors, integration rules, and model assumptions.</p>
+              </div>
+              <button type="button" aria-label="Close calculation toolkit" onClick={() => setCalculationToolkitOpen(false)}>Close ×</button>
+            </header>
+            <CalculationToolkitContent
+              metrics={result.metrics}
+              power={power}
+              corrections={referencePowerCorrections}
+              dilData={dilData}
+              dilPowerIsFactor={dilPowerIsFactor}
+            />
+          </section>
+        </div>
+      )}
     </main>
   );
 }

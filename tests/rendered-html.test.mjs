@@ -56,9 +56,7 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /BOL net array power/i);
   assert.match(html, /EOL net array power/i);
   assert.match(html, /Calculation toolkit/i);
-  assert.match(html, /Array power audit/i);
-  assert.match(html, /Energy, load &amp; battery/i);
-  assert.match(html, /Geometry &amp; scope assumptions/i);
+  assert.match(html, /Open formulas &amp; assumptions/i);
   assert.doesNotMatch(html, /Edit spacecraft &amp; solar power model/i);
   assert.match(html, /Spacecraft geometry, body frames and the solar power model/i);
   assert.match(html, /Dual side/i);
@@ -92,10 +90,11 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Orbit radius/i);
   assert.match(html, /Penumbra/i);
   assert.match(html, /Umbra/i);
-  assert.match(html, /NASA Blue Marble/i);
+  assert.doesNotMatch(html, /NASA Blue Marble/i);
+  assert.doesNotMatch(html, /Orbit illumination legend/i);
   assert.doesNotMatch(html, /GROUND TRACK/i);
   assert.doesNotMatch(html, /SUN–PANEL INCIDENCE/i);
-  assert.match(html, /EARTH \/ ORBIT VIEW-LOCKED/i);
+  assert.doesNotMatch(html, /EARTH \/ ORBIT VIEW-LOCKED/i);
   assert.match(html, /locked orbit scene/i);
   assert.match(html, /MODEL SCOPE/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
