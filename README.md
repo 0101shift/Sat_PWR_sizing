@@ -68,7 +68,7 @@ Highlights:
 - rigid whole-spacecraft attitude motion during DIL replay—the bus and attached parts retain their configured mounts;
 - green imaging footprint emitted from the installed optical payload and blue downlink beam emitted from the installed X/Ka-band radio dish;
 - shortest-path attitude interpolation between operation states, avoiding unnecessary long rotations;
-- a synchronized, unobtrusive DIL-derived/measured power overlay above the playback controls during actual-data replay.
+- a synchronized, unobtrusive DIL-derived/measured power and battery-SOC overlay above the playback controls during actual-data replay.
 
 ### Power + Operations
 
@@ -100,9 +100,6 @@ Direct routes after the launcher starts:
 
 - Main dashboard: [http://localhost:3000](http://localhost:3000)
 - EO inventory: [http://localhost:3000/satellite-inventory](http://localhost:3000/satellite-inventory)
-- Integration lab: [http://localhost:3000/satellite-integration-lab](http://localhost:3000/satellite-integration-lab)
-
-The integration lab is an isolated Three.js validation scene. It maps the configured signed velocity axis to the orbit tangent and the signed nadir axis to Earth center, then reports velocity, nadir, frame orthogonality, payload-nadir, and panel-Sun angles without changing the main dashboard configuration.
 
 ## Electrical model
 

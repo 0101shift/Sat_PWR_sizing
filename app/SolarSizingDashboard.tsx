@@ -2125,16 +2125,6 @@ function NumberField({
   );
 }
 
-function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "warn" | "good" }) {
-  return (
-    <article className={`metric${tone ? ` metric-${tone}` : ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{note}</small>
-    </article>
-  );
-}
-
 type PowerMetricState = "neutral" | "good" | "watch" | "critical";
 
 function PowerMetricCell({
@@ -2205,7 +2195,7 @@ function Segmented<T extends string>({
   );
 }
 
-export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { layoutVariant?: "cockpit" | "legacy" }) {
+export default function SolarSizingDashboard() {
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>("SIMULATION");
   const [satelliteFocusRequest, setSatelliteFocusRequest] = useState(0);
   const [engineeringView, setEngineeringView] = useState<"ORBIT" | "POWER">("ORBIT");
@@ -2939,7 +2929,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
   );
 
   return (
-    <main className={`app-shell layout-${layoutVariant}`}>
+    <main className="app-shell layout-cockpit">
       <header className="topbar">
         <div className="brand-lockup">
           <div className="brand-mark" aria-hidden="true"><span /></div>
@@ -3155,7 +3145,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <div><span>Packaging</span><b>{power.packagingEfficiencyPct.toFixed(1)}%</b></div>
               <div><span>Operating temperature</span><b>{power.operatingTemperatureC.toFixed(0)}°C</b></div>
             </div>
-            {layoutVariant === "legacy" && <button type="button" className="edit-deployed-config-button" onClick={() => setDashboardTab("SATELLITE_CONFIGURATION")}>Edit spacecraft & solar power model</button>}
             <p className="control-note">Spacecraft geometry, body frames and the solar power model are managed in Satellite Configuration and applied after Deploy to orbit.</p>
           </section>
 
@@ -3216,7 +3205,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               </button>
             </aside>
           )}
-          <section className="cockpit-stage-pane cockpit-orbit-pane" hidden={layoutVariant === "cockpit" && engineeringView !== "ORBIT"}>
+          <section className="cockpit-stage-pane cockpit-orbit-pane" hidden={engineeringView !== "ORBIT"}>
           <section className="visual-panel">
             <div className="panel-header">
               <div>
@@ -3225,7 +3214,6 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               </div>
               <div className="deployed-config-actions">
                 <span><small>DEPLOYED SPACECRAFT</small><b>{deployedSpacecraft.name}</b></span>
-                {layoutVariant === "legacy" && <button type="button" onClick={() => setDashboardTab("SATELLITE_CONFIGURATION")}>Edit configuration</button>}
               </div>
             </div>
             <div className="canvas-wrap orbit-canvas-wrap">
@@ -3275,7 +3263,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
               <span>{currentDilRecord ? currentDilRecord.timeLabel : `T+ ${formatDuration(current.tSec)}`}</span>
               <span>{dilSummary ? `${formatDuration(dilSummary.durationSec)} record` : `${formatDuration(result.metrics.periodSec)} / orbit`}</span>
             </div>
-            {layoutVariant === "cockpit" && renderMissionPowerSummary("orbit-output-metrics")}
+            {renderMissionPowerSummary("orbit-output-metrics")}
             {currentDilRecord && (
               <div className="dil-telemetry" aria-label="Current DIL telemetry">
                 <div><span>Operation</span><b>{currentDilRecord.spacecraftOperation || "—"}</b></div>
@@ -3295,16 +3283,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
           </section>
 
           </section>
-          <section className={`cockpit-stage-pane cockpit-power-pane${dilSummary ? " has-dil-operations" : ""}`} hidden={layoutVariant === "cockpit" && engineeringView !== "POWER"}>
-
-          {layoutVariant === "legacy" && (
-            <section className="metrics-grid" aria-live="polite">
-              <Metric label={dilData ? `${dilComparisonLabel} power` : "Power now"} value={`${primaryPowerNowW.toFixed(0)} W`} note={dilData ? `Modeled ${current.powerW.toFixed(0)} W · imported DIL · ${Math.round(current.shadowFactor * 100)}% light` : `Corrected EOL MPP · ${Math.round(current.shadowFactor * 100)}% light · θ ${current.incidenceDeg.toFixed(1)}°`} tone={dilSummary && !dilWorstCaseReady ? undefined : primaryPowerNowW > (dilSummary ? currentOperationMaxLoadW ?? 0 : power.averageLoadW) ? "good" : "warn"} />
-              <Metric label={dilData ? `${dilComparisonLabel} energy / span` : "Generated energy / span"} value={dilSummary ? `${dilSummary.measuredEnergyWh.toFixed(0)} Wh` : `${result.metrics.energyWh.toFixed(0)} Wh`} note={dilSummary ? `Modeled ${dilSummary.modeledEnergyWh.toFixed(0)} Wh · perfect-pointing ceiling ${dilSummary.perfectPointingEnergyWh.toFixed(0)} Wh` : `${result.metrics.energyPerOrbitWh.toFixed(0)} Wh/orbit · ${result.metrics.averagePowerW.toFixed(0)} W average`} tone={primaryEnergyPositive ? "good" : "warn"} />
-              <Metric label={dilData ? "Worst-case OAP load" : "Eclipse / orbit"} value={dilSummary ? dilWorstCaseReady ? `${dilLoadAnalysis?.worstCaseAverageLoadW?.toFixed(1)} W` : "—" : formatDuration(result.metrics.eclipsePerOrbitSec)} note={dilSummary ? dilWorstCaseReady ? `${dilLoadAnalysis?.loadEnergyWh?.toFixed(1)} Wh used · net ${dilLoadAnalysis?.netEnergyWh?.toFixed(1)} Wh` : "Enter every active state load" : "penumbra weighted"} />
-              <Metric label={dilData ? "Worst-case minimum battery" : "Minimum battery"} value={dilSummary && !dilWorstCaseReady ? "—" : `${(dilSummary?.minSocPct ?? result.metrics.minSocPct).toFixed(0)}%`} note={dilSummary && !dilWorstCaseReady ? "Awaiting operation loads" : `${(dilSummary?.finalSocPct ?? result.metrics.finalSocPct).toFixed(0)}% final SOC`} tone={dilSummary && !dilWorstCaseReady ? undefined : batteryHealthy ? "good" : "warn"} />
-            </section>
-          )}
+          <section className={`cockpit-stage-pane cockpit-power-pane${dilSummary ? " has-dil-operations" : ""}`} hidden={engineeringView !== "POWER"}>
 
           <section className="analysis-grid">
             <article className="chart-card">
@@ -3472,7 +3451,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
             )}
           </div>
 
-          {layoutVariant === "cockpit" && renderMissionPowerSummary("power-output-metrics")}
+          {renderMissionPowerSummary("power-output-metrics")}
 
           <footer className="model-note">
             <span>MODEL SCOPE</span>

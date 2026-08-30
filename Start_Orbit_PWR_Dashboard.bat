@@ -133,7 +133,6 @@ echo.
 echo Starting the live local development server...
 echo Main dashboard:  http://localhost:%DASHBOARD_PORT%/
 echo EO inventory:    http://localhost:%DASHBOARD_PORT%/satellite-inventory
-echo Integration lab: http://localhost:%DASHBOARD_PORT%/satellite-integration-lab
 echo Keep this window open. Press Ctrl+C to stop the dashboard.
 echo.
 call "node_modules\.bin\vinext.CMD" dev --port %DASHBOARD_PORT%

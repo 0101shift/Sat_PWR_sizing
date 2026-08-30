@@ -101,19 +101,6 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
-test("server-renders the archived dashboard layout independently", async () => {
-  const response = await render("/legacy");
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-  const html = await response.text();
-  assert.match(html, /Archived Dashboard Layout/i);
-  assert.match(html, /layout-legacy/i);
-  assert.match(html, /Projects/i);
-  assert.match(html, /Mission simulation/i);
-  assert.match(html, /Sun–array geometry/i);
-  assert.match(html, /Upload DIL file/i);
-});
-
 test("server-renders the standalone local EO satellite inventory", async () => {
   const response = await render("/satellite-inventory");
   assert.equal(response.status, 200);
@@ -148,33 +135,4 @@ test("server-renders the standalone local EO satellite inventory", async () => {
   assert.match(html, /Save locally/i);
   assert.match(html, /Export JSON/i);
   assert.match(html, /Delete satellite/i);
-});
-
-test("server-renders the isolated satellite axis integration lab", async () => {
-  const response = await render("/satellite-integration-lab");
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-  const html = await response.text();
-  assert.match(html, /Satellite Axis Integration Lab/i);
-  assert.match(html, /ISOLATED · FINAL SIMULATOR UNCHANGED/i);
-  assert.match(html, /Circular LVLH test/i);
-  assert.match(html, /Velocity body axis/i);
-  assert.match(html, /Nadir body axis/i);
-  assert.match(html, /VELOCITY ALIGNMENT ERROR/i);
-  assert.match(html, /NADIR ALIGNMENT ERROR/i);
-  assert.match(html, /PANEL–SUN INCIDENCE/i);
-  assert.match(html, /No attitude behavior has been merged into the final simulator/i);
-});
-
-test("server-renders the isolated full-screen dashboard layout lab", async () => {
-  const response = await render("/layout-lab");
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  assert.match(html, /LAYOUT LAB · ISOLATED PROTOTYPE/i);
-  assert.match(html, /Only this setup rail scrolls/i);
-  assert.match(html, /Add custom part/i);
-  assert.match(html, /mass, power and thermal specifications are intentionally omitted/i);
-  assert.match(html, /Fixed engineering stage/i);
-  assert.match(html, /aria-label="Engineering view"/i);
-  assert.match(html, />Power \+ operations</i);
 });

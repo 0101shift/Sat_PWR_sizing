@@ -3,8 +3,6 @@
 # dependencies
 /node_modules
 /.orbit-pwr-runtime/
-/.pnpm-store/
-/pnpm-lock.yaml
 /.pnp
 .pnp.*
 .yarn/*
