@@ -1615,6 +1615,21 @@ input[type="range"] {
   box-shadow: 0 0 7px rgba(115, 242, 218, 0.65);
 }
 
+.orbit-dil-power-overlay header .orbit-soc-readout {
+  margin-left: 4px;
+  color: #d7c58a;
+}
+
+.orbit-dil-power-overlay header .orbit-soc-readout i {
+  background: #ffd166;
+  box-shadow: 0 0 7px rgba(255, 209, 102, 0.55);
+}
+
+.orbit-dil-power-overlay header .orbit-soc-readout b {
+  color: #ffe29a;
+  font-size: 10px;
+}
+
 .orbit-dil-power-overlay header b { color: #d7f4f1; font-size: 12px; }
 .orbit-dil-power-overlay header em { color: var(--muted-2); font-style: normal; }
 .orbit-dil-power-overlay header strong { margin-left: auto; overflow: hidden; color: #75c7ff; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1622,8 +1637,10 @@ input[type="range"] {
 .orbit-power-grid { stroke: rgba(104, 145, 147, 0.12); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .orbit-power-area { fill: url(#orbit-dil-power-fill); opacity: 0.44; }
 .orbit-power-line { fill: none; stroke: #73f2da; stroke-width: 1.5; opacity: 0.82; vector-effect: non-scaling-stroke; }
+.orbit-soc-line { fill: none; stroke: #ffd166; stroke-width: 1.35; opacity: 0.86; vector-effect: non-scaling-stroke; }
 .orbit-power-cursor { stroke: #f7d26a; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.82; vector-effect: non-scaling-stroke; }
 .orbit-power-point { fill: #f7d26a; stroke: #071216; stroke-width: 1.5; }
+.orbit-soc-point { fill: #ffd166; stroke: #071216; stroke-width: 1.4; }
 
 .canvas-readout {
   order: 3;

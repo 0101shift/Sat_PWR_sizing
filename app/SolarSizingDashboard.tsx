@@ -1955,11 +1955,13 @@ function OrbitDilPowerOverlay({
   currentIndex,
   label,
   operation,
+  showSoc,
 }: {
   points: SimulationPoint[];
   currentIndex: number;
   label: string;
   operation?: string;
+  showSoc: boolean;
 }) {
   const chart = useMemo(() => {
     const sampled = decimateSimulationPoints(points, 700);
@@ -1973,10 +1975,16 @@ function OrbitDilPowerOverlay({
       const { x, y } = coordinate(point);
       return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
     }).join(" ");
+    const socPath = sampled.map((point, index) => {
+      const x = point.tSec / maxTime * 1000;
+      const y = 64 - clamp(point.socPct, 0, 100) / 100 * 56;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(" ");
     return {
       maxTime,
       maxPower,
       linePath,
+      socPath,
       areaPath: `${linePath} L1000,64 L0,64 Z`,
     };
   }, [points]);
@@ -1985,16 +1993,18 @@ function OrbitDilPowerOverlay({
   const currentPower = activePoint.measuredPowerW ?? 0;
   const cursorX = activePoint.tSec / chart.maxTime * 1000;
   const cursorY = 64 - currentPower / chart.maxPower * 56;
+  const socCursorY = 64 - clamp(activePoint.socPct, 0, 100) / 100 * 56;
 
   return (
-    <section className="orbit-dil-power-overlay" aria-label={`${label} power profile in Orbit View`}>
+    <section className="orbit-dil-power-overlay" aria-label={`${label} power${showSoc ? " and battery SOC" : ""} profile in Orbit View`}>
       <header>
         <span><i /> {label} power</span>
         <b>{currentPower.toFixed(1)} W</b>
         <em>Peak {chart.maxPower.toFixed(1)} W</em>
+        {showSoc && <span className="orbit-soc-readout"><i /> SOC <b>{activePoint.socPct.toFixed(1)}%</b></span>}
         <strong>{operation || "UNSPECIFIED"}</strong>
       </header>
-      <svg viewBox="0 0 1000 68" preserveAspectRatio="none" role="img" aria-label={`${label} power trace with playback cursor`}>
+      <svg viewBox="0 0 1000 68" preserveAspectRatio="none" role="img" aria-label={`${label} power${showSoc ? " and battery SOC" : ""} traces with playback cursor`}>
         <defs>
           <linearGradient id="orbit-dil-power-fill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor="#73f2da" stopOpacity="0.32" />
@@ -2006,8 +2016,10 @@ function OrbitDilPowerOverlay({
         <line className="orbit-power-grid" x1="0" y1="64" x2="1000" y2="64" />
         <path className="orbit-power-area" d={chart.areaPath} />
         <path className="orbit-power-line" d={chart.linePath} />
+        {showSoc && <path className="orbit-soc-line" d={chart.socPath} />}
         <line className="orbit-power-cursor" x1={cursorX} y1="5" x2={cursorX} y2="64" />
         <circle className="orbit-power-point" cx={cursorX} cy={cursorY} r="4" vectorEffect="non-scaling-stroke" />
+        {showSoc && <circle className="orbit-soc-point" cx={cursorX} cy={socCursorY} r="3.5" vectorEffect="non-scaling-stroke" />}
       </svg>
     </section>
   );
@@ -3235,6 +3247,7 @@ export default function SolarSizingDashboard({ layoutVariant = "cockpit" }: { la
                   currentIndex={activeIndex}
                   label={dilPowerIsFactor ? dilComparisonLabel : "DIL measured"}
                   operation={currentDilRecord?.spacecraftOperation}
+                  showSoc={dilWorstCaseReady}
                 />
               )}
             </div>
