@@ -1,5 +1,6 @@
 import {
-  arrayPowerCorrectionFactors,
+  arrayPowerSample,
+  parallelStringAvailability,
   type MissionConfig,
   type PowerConfig,
   type SignedAxis,
@@ -76,6 +77,100 @@ export type DilPowerSemantics = "WATTS" | "PERCENT_MAX";
 export type DilReferenceAxisSource = "EXPLICIT_COLUMN" | "LEGACY_COLUMN" | "USER_OVERRIDE" | "INFERRED" | "NONE";
 export const DIL_LOAD_ILLUMINATION_STATES = ["SUNLIT", "ECLIPSE"] as const;
 export type DilLoadIlluminationState = (typeof DIL_LOAD_ILLUMINATION_STATES)[number];
+
+const MAX_EXTRAPOLATED_RECORDS = 120_000;
+
+function medianPositiveStep(records: DilRecord[]) {
+  const steps = records.slice(1)
+    .map((record, index) => record.timeSec - records[index].timeSec)
+    .filter((step) => step > 0)
+    .sort((a, b) => a - b);
+  return steps.length ? steps[Math.floor(steps.length / 2)] : 1;
+}
+
+function energySeriesFromRecords(records: DilRecord[]): DilEnergySeries {
+  const operations: string[] = [];
+  const operationLookup = new Map<string, number>();
+  const timeSec = new Float64Array(records.length);
+  const sunBodyXyz = new Float32Array(records.length * 3);
+  const panelIncidenceDeg = new Float32Array(records.length);
+  const sunlightFactor = new Float32Array(records.length);
+  const measuredPowerW = new Float32Array(records.length);
+  const operationIndex = new Uint32Array(records.length);
+  records.forEach((record, index) => {
+    timeSec[index] = record.timeSec;
+    sunBodyXyz[index * 3] = record.sunBody[0];
+    sunBodyXyz[index * 3 + 1] = record.sunBody[1];
+    sunBodyXyz[index * 3 + 2] = record.sunBody[2];
+    panelIncidenceDeg[index] = record.referencePanelIncidenceDeg ?? Number.NaN;
+    sunlightFactor[index] = dilSunlightFactor(record.sunlitStatus);
+    measuredPowerW[index] = record.solarPowerGeneratedW;
+    let operation = operationLookup.get(record.spacecraftOperation);
+    if (operation === undefined) {
+      operation = operations.length;
+      operationLookup.set(record.spacecraftOperation, operation);
+      operations.push(record.spacecraftOperation);
+    }
+    operationIndex[index] = operation;
+  });
+  return { timeSec, sunBodyXyz, panelIncidenceDeg, sunlightFactor, measuredPowerW, operationIndex, operations };
+}
+
+/**
+ * Repeats (or crops) the imported sequence to the configured mission duration.
+ * The source upload remains unchanged; this derived replay is only used by the
+ * simulator and carries an explicit warning when sampling must be reduced.
+ */
+export function extrapolateDilData(source: ParsedDilData, targetDurationSec: number): ParsedDilData {
+  if (!source.records.length || targetDurationSec <= 0) return source;
+  const sourceStartSec = source.records[0].timeSec;
+  const stepSec = medianPositiveStep(source.records);
+  const sourceSpanSec = Math.max(0, source.records[source.records.length - 1].timeSec - sourceStartSec);
+  const wholeDaySpan = Math.round(sourceSpanSec / 86400) * 86400;
+  const lastSampleClosesCycle = wholeDaySpan > 0 && Math.abs(sourceSpanSec - wholeDaySpan) <= stepSec * 0.25;
+  const cycleSec = Math.max(stepSec, lastSampleClosesCycle ? sourceSpanSec : sourceSpanSec + stepSec);
+  const cycleCount = Math.max(1, Math.ceil(targetDurationSec / cycleSec));
+  const maximumPerCycle = Math.max(2, Math.floor(MAX_EXTRAPOLATED_RECORDS / cycleCount));
+  const stride = Math.max(1, Math.ceil(source.records.length / maximumPerCycle));
+  const baseRecords = source.records.filter((record, index, records) => {
+    if (index === 0 || index === records.length - 1 || index % stride === 0) return true;
+    const previous = records[index - 1];
+    return record.spacecraftOperation !== previous.spacecraftOperation
+      || dilLoadIlluminationState(dilSunlightFactor(record.sunlitStatus))
+        !== dilLoadIlluminationState(dilSunlightFactor(previous.sunlitStatus));
+  });
+  const records: DilRecord[] = [];
+  for (let cycle = 0; cycle < cycleCount; cycle += 1) {
+    for (const record of baseRecords) {
+      const timeSec = cycle * cycleSec + (record.timeSec - sourceStartSec);
+      if (timeSec > targetDurationSec + 1e-9) break;
+      records.push({ ...record, timeSec, timeLabel: `D${Math.floor(timeSec / 86400) + 1} +${Math.round(timeSec % 86400)}s` });
+    }
+  }
+  const last = records[records.length - 1];
+  if (last && last.timeSec < targetDurationSec - 1e-9) {
+    const cycleOffsetSec = targetDurationSec % cycleSec;
+    const template = baseRecords.reduce((nearest, record) => (
+      Math.abs((record.timeSec - sourceStartSec) - cycleOffsetSec)
+        < Math.abs((nearest.timeSec - sourceStartSec) - cycleOffsetSec) ? record : nearest
+    ), baseRecords[0]);
+    records.push({
+      ...template,
+      timeSec: targetDurationSec,
+      timeLabel: `D${Math.floor(targetDurationSec / 86400) + 1} +${Math.round(targetDurationSec % 86400)}s`,
+    });
+  }
+  return {
+    ...source,
+    records,
+    energySeries: energySeriesFromRecords(records),
+    warnings: [
+      ...source.warnings,
+      `DIL replay repeated to ${Math.round(targetDurationSec / 3600 * 10) / 10} h for mission-duration energy and SOC analysis.`,
+      ...(stride > 1 ? [`Extrapolated replay sampled every ${stride} source rows to keep the dashboard responsive.`] : []),
+    ],
+  };
+}
 
 export function dilLoadIlluminationState(sunlightFactor: number): DilLoadIlluminationState {
   // Penumbra uses the eclipse load profile for conservative sizing while its
@@ -398,15 +493,11 @@ export function analyzeDilEnergy(
   for (let index = 0; index < count; index += 1) {
     if (Number.isFinite(series.panelIncidenceDeg[index])) recordedIncidenceSamples += 1;
   }
-  const eolArrayPowerW = Math.max(0, power.eolVmpV)
-    * Math.max(0, power.eolImpA)
-    * Math.max(1, Math.round(power.seriesCells))
-    * Math.max(1, Math.round(power.parallelStrings));
   const configuredReferenceDate = new Date(
     Number.isFinite(configuredEpochMs) ? configuredEpochMs : analysisEpochMs,
   );
-  const correctedEolReferencePowerW = eolArrayPowerW
-    * arrayPowerCorrectionFactors(power, configuredReferenceDate, 0, 1).totalRetention;
+  const correctedEolReferencePowerW = arrayPowerSample(power, configuredReferenceDate, 0, 1).effectiveBusPowerW;
+  const stringAvailability = parallelStringAvailability(power);
   type OperationAccumulator = DilOperationEnergy & { incidenceDegSec: number };
   const operationAccumulators = series.operations.flatMap((operation) =>
     DIL_LOAD_ILLUMINATION_STATES.map((illumination): OperationAccumulator => ({
@@ -436,10 +527,8 @@ export function analyzeDilEnergy(
       : Math.acos(clamp(dot(panelNormalBody, sunBody), -1, 1)) * RAD;
     const shadowFactor = series.sunlightFactor[index];
     const date = new Date(analysisEpochMs + series.timeSec[index] * 1000);
-    const modeledPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, incidenceDeg, shadowFactor).totalRetention;
-    const perfectPointingPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, -power.pointingErrorDeg, shadowFactor).totalRetention;
+    const modeledPowerW = arrayPowerSample(power, date, incidenceDeg, shadowFactor).effectiveBusPowerW;
+    const perfectPointingPowerW = arrayPowerSample(power, date, -power.pointingErrorDeg, shadowFactor).effectiveBusPowerW;
     const rawPowerValue = series.measuredPowerW[index];
     return {
       incidenceDeg,
@@ -448,7 +537,7 @@ export function analyzeDilEnergy(
       perfectPointingPowerW,
       measuredPowerW: powerSemantics === "PERCENT_MAX"
         ? clamp(rawPowerValue, 0, 100) / 100 * correctedEolReferencePowerW
-        : rawPowerValue,
+        : rawPowerValue * stringAvailability.powerRetention,
       operationIndex: series.operationIndex[index],
       illumination: dilLoadIlluminationState(shadowFactor),
     };
@@ -564,11 +653,6 @@ export function analyzeDilAxisSweep(
   const configuredEpochMs = new Date(mission.epoch).getTime();
   const analysisEpochMs = epochMs
     ?? (Number.isFinite(configuredEpochMs) ? configuredEpochMs : Date.UTC(2026, 0, 1));
-  const eolArrayPowerW = Math.max(0, power.eolVmpV)
-    * Math.max(0, power.eolImpA)
-    * Math.max(1, Math.round(power.seriesCells))
-    * Math.max(1, Math.round(power.parallelStrings));
-  const angularExponent = clamp(power.angularResponseExponent, 0.25, 4);
   const pointingErrorDeg = Math.max(0, power.pointingErrorDeg);
   const referenceIncidenceApplies = Math.abs(mission.panelRotationXDeg) < 1e-9
     && Math.abs(mission.panelRotationYDeg) < 1e-9
@@ -582,8 +666,12 @@ export function analyzeDilAxisSweep(
       series.sunBodyXyz[index * 3 + 2],
     ];
     const date = new Date(analysisEpochMs + series.timeSec[index] * 1000);
-    const perfectPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, -pointingErrorDeg, series.sunlightFactor[index]).totalRetention;
+    const perfectPowerW = arrayPowerSample(
+      power,
+      date,
+      -pointingErrorDeg,
+      series.sunlightFactor[index],
+    ).effectiveBusPowerW;
     return {
       perfectPowerW,
       axisPowerW: panelNormals.map((normal, axisIndex) => {
@@ -593,8 +681,7 @@ export function analyzeDilAxisSweep(
           && Number.isFinite(importedReferenceIncidenceDeg)
           ? clamp(importedReferenceIncidenceDeg, 0, 180)
           : Math.acos(clamp(dot(normal, sunBody), -1, 1)) * RAD;
-        const adjustedIncidenceDeg = clamp(incidenceDeg + pointingErrorDeg, 0, 180);
-        return perfectPowerW * Math.max(0, Math.cos(adjustedIncidenceDeg * DEG)) ** angularExponent;
+        return arrayPowerSample(power, date, incidenceDeg, series.sunlightFactor[index]).effectiveBusPowerW;
       }),
     };
   };
@@ -645,15 +732,13 @@ export function buildDilSimulation(
   const configuredEpochMs = new Date(mission.epoch).getTime();
   const replayEpochMs = epochMs
     ?? (Number.isFinite(configuredEpochMs) ? configuredEpochMs : Date.UTC(2026, 0, 1));
-  const eolArrayPowerW = Math.max(0, power.eolVmpV)
-    * Math.max(0, power.eolImpA)
-    * Math.max(1, Math.round(power.seriesCells))
-    * Math.max(1, Math.round(power.parallelStrings));
   const configuredReferenceDate = new Date(
     Number.isFinite(configuredEpochMs) ? configuredEpochMs : replayEpochMs,
   );
-  const correctedEolReferencePowerW = eolArrayPowerW
-    * arrayPowerCorrectionFactors(power, configuredReferenceDate, 0, 1).totalRetention;
+  const referencePower = arrayPowerSample(power, configuredReferenceDate, 0, 1);
+  const correctedEolReferencePowerW = referencePower.effectiveBusPowerW;
+  const rawEolReferencePowerW = referencePower.rawPanelPowerW;
+  const stringAvailability = parallelStringAvailability(power);
   const referenceIncidenceApplies = referencePanelAxis === mission.panelFacingAxis
     && Math.abs(mission.panelRotationXDeg) < 1e-9
     && Math.abs(mission.panelRotationYDeg) < 1e-9
@@ -729,13 +814,15 @@ export function buildDilSimulation(
     const attitudeCorrectionDeg = Math.acos(clamp(dot(rawEffectiveSunVector, lockedSunVector), -1, 1)) * RAD;
     const shadowFactor = dilSunlightFactor(record.sunlitStatus);
     const date = new Date(replayEpochMs + record.timeSec * 1000);
-    const modeledPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, visualIncidenceDeg, shadowFactor).totalRetention;
-    const perfectPointingPowerW = eolArrayPowerW
-      * arrayPowerCorrectionFactors(power, date, -power.pointingErrorDeg, shadowFactor).totalRetention;
+    const modeledPower = arrayPowerSample(power, date, visualIncidenceDeg, shadowFactor);
+    const modeledPowerW = modeledPower.effectiveBusPowerW;
+    const perfectPointingPowerW = arrayPowerSample(power, date, -power.pointingErrorDeg, shadowFactor).effectiveBusPowerW;
     const measuredPowerW = powerSemantics === "PERCENT_MAX"
       ? clamp(record.solarPowerGeneratedW, 0, 100) / 100 * correctedEolReferencePowerW
-      : record.solarPowerGeneratedW;
+      : record.solarPowerGeneratedW * stringAvailability.powerRetention;
+    const rawPanelPowerW = powerSemantics === "PERCENT_MAX"
+      ? clamp(record.solarPowerGeneratedW, 0, 100) / 100 * rawEolReferencePowerW
+      : modeledPower.rawPanelPowerW;
     const orbitNormal = normalize(cross(positionKm, velocityKmS), axes[2]);
     const betaDeg = Math.asin(clamp(dot(orbitNormal, sunVector), -1, 1)) * RAD;
     const dtSec = index === 0 ? 0 : Math.max(0, record.timeSec - records[index - 1].timeSec);
@@ -781,6 +868,7 @@ export function buildDilSimulation(
       betaDeg,
       incidenceDeg: visualIncidenceDeg,
       shadowFactor,
+      rawPanelPowerW,
       powerW: modeledPowerW,
       measuredPowerW,
       perfectPointingPowerW,

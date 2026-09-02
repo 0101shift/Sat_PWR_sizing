@@ -8,6 +8,7 @@ import { DEFAULT_EO_SATELLITES, type SatelliteInventoryItem } from "./lib/satell
 import {
   EARTH_RADIUS_KM,
   arrayPowerCorrectionFactors,
+  summarizeDailyEnergy,
   orbitalFollowCamera,
   formatDuration,
   greenwichMeanSiderealAngleRad,
@@ -28,6 +29,7 @@ import {
   analyzeDilAxisSweep,
   analyzeDilOperationLoads,
   buildDilSimulation,
+  extrapolateDilData,
   dilLoadIlluminationState,
   dilOperationLoadKey,
   DIL_REQUIRED_FIELDS,
@@ -132,6 +134,10 @@ const DEFAULT_POWER: PowerConfig = {
   cellAreaCm2: 30.18,
   seriesCells: 19,
   parallelStrings: 24,
+  scenarioSeriesCells: 19,
+  scenarioParallelStrings: 24,
+  arrayFaultMode: "NOMINAL",
+  failedParallelStrings: 0,
   packagingEfficiencyPct: 90,
   fluenceE14Cm2: 5,
   referenceIrradianceWm2: 1367,
@@ -140,6 +146,8 @@ const DEFAULT_POWER: PowerConfig = {
   powerTempCoefficientPctC: -0.08,
   pointingErrorDeg: 0,
   angularResponseExponent: 1,
+  energyConversionMode: "MPPT",
+  nominalBusVoltageV: 28,
   mpptEfficiencyPct: 100,
   harnessEfficiencyPct: 100,
   mismatchLossPct: 0,
@@ -289,6 +297,10 @@ function dashboardConfigurationForSatellite(
     cellAreaCm2: catalog.cellAreaCm2,
     seriesCells: item.array.seriesCells,
     parallelStrings: item.array.parallelStrings,
+    scenarioSeriesCells: item.array.seriesCells,
+    scenarioParallelStrings: item.array.parallelStrings,
+    arrayFaultMode: "NOMINAL",
+    failedParallelStrings: 0,
     packagingEfficiencyPct: item.array.packagingEfficiency * 100,
     fluenceE14Cm2,
     referenceIrradianceWm2: item.powerDefaults.referenceIrradianceWm2 ?? 1367,
@@ -297,6 +309,8 @@ function dashboardConfigurationForSatellite(
     powerTempCoefficientPctC: item.powerDefaults.powerTempCoefficientPctC ?? -0.08,
     pointingErrorDeg: item.powerDefaults.pointingErrorDeg ?? 0,
     angularResponseExponent: item.powerDefaults.angularResponseExponent ?? 1,
+    energyConversionMode: item.powerDefaults.energyConversionMode ?? "MPPT",
+    nominalBusVoltageV: item.powerDefaults.nominalBusVoltageV ?? 28,
     mpptEfficiencyPct: item.powerDefaults.mpptEfficiency * 100,
     harnessEfficiencyPct: (item.powerDefaults.harnessEfficiency ?? 1) * 100,
     mismatchLossPct: item.powerDefaults.mismatchLossPct ?? 0,
@@ -1644,6 +1658,7 @@ function OrbitCanvas({
 }
 
 type PowerPlotVisibility = {
+  raw: boolean;
   primary: boolean;
   modeled: boolean;
   perfect: boolean;
@@ -1652,6 +1667,7 @@ type PowerPlotVisibility = {
 };
 
 const DEFAULT_POWER_PLOT_VISIBILITY: PowerPlotVisibility = {
+  raw: true,
   primary: true,
   modeled: true,
   perfect: true,
@@ -1677,22 +1693,61 @@ function PowerChart({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const size = useCanvasSize(canvasRef);
   const [hover, setHover] = useState<{ index: number; x: number; y: number; side: "left" | "right" } | null>(null);
+  const [timeView, setTimeView] = useState({ start: 0, end: 1 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panGesture = useRef<{
+    pointerId: number;
+    startX: number;
+    viewStart: number;
+    viewEnd: number;
+  } | null>(null);
   const isDilReplay = Boolean(dilRecords?.length);
   const showSocPlot = showSoc && visiblePlots.soc;
   const chartModel = useMemo(() => {
     let maxPower = 1;
     for (const point of points) {
+      if (visiblePlots.raw) maxPower = Math.max(maxPower, point.rawPanelPowerW ?? 0);
       if (visiblePlots.primary) maxPower = Math.max(maxPower, isDilReplay ? point.measuredPowerW ?? 0 : point.powerW);
       if (isDilReplay && visiblePlots.modeled) maxPower = Math.max(maxPower, point.powerW);
       if (visiblePlots.perfect) maxPower = Math.max(maxPower, point.perfectPointingPowerW ?? 0);
       if (visiblePlots.load) maxPower = Math.max(maxPower, point.operationLoadW ?? 0);
     }
     return {
-      sampledPoints: decimateSimulationPoints(points, 1800),
       maxPower: maxPower * 1.08,
       maxTime: Math.max(1e-9, points[points.length - 1]?.tSec ?? 0),
     };
   }, [isDilReplay, points, visiblePlots]);
+  const fitTimeView = () => {
+    setTimeView({ start: 0, end: 1 });
+    setHover(null);
+  };
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handleChartWheel = (event: WheelEvent) => {
+      // Preserve normal dashboard scrolling. Chart zoom is deliberately gated
+      // behind the same modifier used by the orbit view to avoid scroll traps.
+      if ((!event.ctrlKey && !event.metaKey) || !points.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = canvas.getBoundingClientRect();
+      const left = 54;
+      const right = 52;
+      const plotWidth = Math.max(1, bounds.width - left - right);
+      const localRatio = clamp((event.clientX - bounds.left - left) / plotWidth, 0, 1);
+      setTimeView((currentView) => {
+        const currentSpan = currentView.end - currentView.start;
+        const nextSpan = clamp(currentSpan * (event.deltaY < 0 ? 0.78 : 1.28), 0.002, 1);
+        if (nextSpan >= 0.9999) return { start: 0, end: 1 };
+        const anchor = currentView.start + localRatio * currentSpan;
+        const start = clamp(anchor - localRatio * nextSpan, 0, 1 - nextSpan);
+        return { start, end: start + nextSpan };
+      });
+      setHover(null);
+    };
+    canvas.addEventListener("wheel", handleChartWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleChartWheel);
+  }, [points.length]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !points.length) return;
@@ -1709,8 +1764,24 @@ function PowerChart({
     const bottom = 42;
     const plotWidth = width - left - right;
     const plotHeight = height - top - bottom;
-    const { maxPower, maxTime, sampledPoints } = chartModel;
-    const x = (time: number) => left + (time / maxTime) * plotWidth;
+    const { maxPower, maxTime } = chartModel;
+    const viewSpan = Math.max(0.0001, timeView.end - timeView.start);
+    const viewStartTime = timeView.start * maxTime;
+    const viewEndTime = timeView.end * maxTime;
+    const lowerBound = (time: number) => {
+      let low = 0;
+      let high = points.length;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (points[middle].tSec < time) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    };
+    const visibleStartIndex = Math.max(0, lowerBound(viewStartTime) - 1);
+    const visibleEndIndex = Math.min(points.length, lowerBound(viewEndTime) + 1);
+    const sampledPoints = decimateSimulationPoints(points.slice(visibleStartIndex, visibleEndIndex), 1800);
+    const x = (time: number) => left + ((time / maxTime - timeView.start) / viewSpan) * plotWidth;
     const yPower = (power: number) => top + plotHeight - (power / maxPower) * plotHeight;
     const ySoc = (soc: number) => top + plotHeight - (soc / 100) * plotHeight;
 
@@ -1735,7 +1806,7 @@ function PowerChart({
       context.moveTo(xx, top);
       context.lineTo(xx, top + plotHeight);
       context.stroke();
-      const tickSeconds = (maxTime * column) / 4;
+      const tickSeconds = maxTime * (timeView.start + viewSpan * column / 4);
       const tickLabel = maxTime >= 86400
         ? `${(tickSeconds / 86400).toFixed(1)}d`
         : maxTime >= 7200
@@ -1745,7 +1816,26 @@ function PowerChart({
       context.fillText(tickLabel, xx, height - 14);
     }
 
+    context.save();
+    context.beginPath();
+    context.rect(left, top, plotWidth, plotHeight);
+    context.clip();
+
     const primaryPower = (point: SimulationPoint) => isDilReplay ? (point.measuredPowerW ?? 0) : point.powerW;
+    if (visiblePlots.raw && sampledPoints.some((point) => point.rawPanelPowerW !== undefined)) {
+      context.beginPath();
+      sampledPoints.forEach((point, index) => {
+        const xx = x(point.tSec);
+        const yy = yPower(point.rawPanelPowerW ?? 0);
+        if (index === 0) context.moveTo(xx, yy);
+        else context.lineTo(xx, yy);
+      });
+      context.strokeStyle = "rgba(126, 204, 255, 0.9)";
+      context.lineWidth = 1.35;
+      context.setLineDash([8, 4]);
+      context.stroke();
+      context.setLineDash([]);
+    }
     if (visiblePlots.primary) {
       const powerGradient = context.createLinearGradient(0, top, 0, top + plotHeight);
       powerGradient.addColorStop(0, isDilReplay ? "rgba(115, 242, 218, 0.42)" : "rgba(73, 217, 212, 0.38)");
@@ -1753,7 +1843,7 @@ function PowerChart({
       context.beginPath();
       context.moveTo(x(sampledPoints[0].tSec), top + plotHeight);
       sampledPoints.forEach((point) => context.lineTo(x(point.tSec), yPower(primaryPower(point))));
-      context.lineTo(x(maxTime), top + plotHeight);
+      context.lineTo(x(sampledPoints[sampledPoints.length - 1].tSec), top + plotHeight);
       context.closePath();
       context.fillStyle = powerGradient;
       context.fill();
@@ -1876,6 +1966,8 @@ function PowerChart({
       }
     }
 
+    context.restore();
+
     context.fillStyle = "rgba(203, 228, 228, 0.62)";
     context.textAlign = "left";
     context.fillText("POWER (W)", left, 15);
@@ -1884,7 +1976,7 @@ function PowerChart({
       context.textAlign = "right";
       context.fillText("SOC %", width - right, 15);
     }
-  }, [chartModel, currentIndex, hover, isDilReplay, points, showSocPlot, size, visiblePlots]);
+  }, [chartModel, currentIndex, hover, isDilReplay, points, showSocPlot, size, timeView, visiblePlots]);
 
   const hoveredPoint = hover ? points[hover.index] : null;
   const hoveredRecord = hover ? dilRecords?.[hover.index] : null;
@@ -1898,16 +1990,39 @@ function PowerChart({
     <div className="power-chart-interactive">
       <canvas
         ref={canvasRef}
-        className="power-chart"
-        aria-label={`Interactive ${isDilReplay ? "DIL-derived primary power" : "power"}, battery state-of-charge, and spacecraft operation timeline`}
+        className={`power-chart${isPanning ? " is-panning" : ""}`}
+        aria-label={`Interactive ${isDilReplay ? "DIL-derived primary power" : "power"}, battery state-of-charge, and spacecraft operation timeline. Use Control plus mouse wheel to zoom, drag to pan, and Fit to window to reset.`}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0 || !points.length) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (event.clientX - bounds.left < 54 || event.clientX - bounds.left > bounds.width - 52) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          panGesture.current = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            viewStart: timeView.start,
+            viewEnd: timeView.end,
+          };
+          setIsPanning(true);
+          setHover(null);
+        }}
         onPointerMove={(event) => {
           if (!points.length) return;
           const bounds = event.currentTarget.getBoundingClientRect();
           const left = 54;
           const right = 52;
           const plotWidth = Math.max(1, bounds.width - left - right);
+          const activePan = panGesture.current;
+          if (activePan?.pointerId === event.pointerId) {
+            const span = activePan.viewEnd - activePan.viewStart;
+            const start = clamp(activePan.viewStart - (event.clientX - activePan.startX) / plotWidth * span, 0, 1 - span);
+            setTimeView({ start, end: start + span });
+            return;
+          }
           const localX = clamp(event.clientX - bounds.left, left, bounds.width - right);
-          const targetTime = ((localX - left) / plotWidth) * chartModel.maxTime;
+          const targetFraction = timeView.start + (localX - left) / plotWidth * (timeView.end - timeView.start);
+          const targetTime = targetFraction * chartModel.maxTime;
           let low = 0;
           let high = points.length - 1;
           while (low < high) {
@@ -1924,8 +2039,31 @@ function PowerChart({
             side: localX > bounds.width * 0.68 ? "left" : "right",
           });
         }}
-        onPointerLeave={() => setHover(null)}
+        onPointerUp={(event) => {
+          if (panGesture.current?.pointerId !== event.pointerId) return;
+          panGesture.current = null;
+          setIsPanning(false);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={() => {
+          panGesture.current = null;
+          setIsPanning(false);
+        }}
+        onPointerLeave={() => {
+          if (!panGesture.current) setHover(null);
+        }}
+        onDoubleClick={fitTimeView}
+        onKeyDown={(event) => {
+          if (event.key.toLowerCase() === "f" || event.key === "0") {
+            event.preventDefault();
+            fitTimeView();
+          }
+        }}
       />
+      <div className="power-chart-navigation" aria-label="Power profile navigation">
+        <span>Ctrl + wheel zoom · drag pan</span>
+        <button type="button" onClick={fitTimeView} disabled={timeView.start === 0 && timeView.end === 1}>Fit to window</button>
+      </div>
       {hover && hoveredPoint && (
         <div
           className="power-chart-tooltip"
@@ -1938,6 +2076,7 @@ function PowerChart({
           <dl>
             <div><dt>Time</dt><dd>{hoveredRecord?.timeLabel ?? `T+ ${formatDuration(hoveredPoint.tSec)}`}</dd></div>
             {visiblePlots.primary && hoveredPoint.measuredPowerW !== undefined && <div><dt>{dilPowerLabel}</dt><dd>{hoveredPoint.measuredPowerW.toFixed(1)} W</dd></div>}
+            {visiblePlots.raw && hoveredPoint.rawPanelPowerW !== undefined && <div><dt>Raw panel</dt><dd>{hoveredPoint.rawPanelPowerW.toFixed(1)} W</dd></div>}
             {visiblePlots.load && hoveredPoint.operationLoadW !== undefined && <div><dt>Maximum load</dt><dd>{hoveredPoint.operationLoadW.toFixed(1)} W</dd></div>}
             {visiblePlots.primary && visiblePlots.load && hoveredPoint.netPowerW !== undefined && <div><dt>Net power</dt><dd>{hoveredPoint.netPowerW >= 0 ? "+" : ""}{hoveredPoint.netPowerW.toFixed(1)} W</dd></div>}
             {showSocPlot && <div><dt>Battery SOC</dt><dd>{hoveredPoint.socPct.toFixed(1)}%</dd></div>}
@@ -2042,10 +2181,15 @@ function CalculationToolkitContent({
     <div className="calculation-toolkit-body">
       <section>
         <h3>Array power audit</h3>
-        <code>P<sub>BOL</sub> = Vmp<sub>BOL</sub> × Imp<sub>BOL</sub> × series × parallel</code>
-        <code>P<sub>EOL</sub> = Vmp<sub>EOL</sub> × Imp<sub>EOL</sub> × series × parallel</code>
-        <p>Raw BOL {metrics.bolArrayPowerW.toFixed(1)} W · raw EOL {metrics.eolArrayPowerW.toFixed(1)} W</p>
-        <code>P<sub>net</sub> = P<sub>rating</sub> × R<sub>temp</sub> × R<sub>electrical</sub> × R<sub>optical</sub> × R<sub>incidence</sub> × R<sub>irradiance</sub> × sunlight</code>
+        <code>N<sub>P,active</sub> = N<sub>P,scenario</sub> − N<sub>P,failed</sub></code>
+        <code>Vmp<sub>array</sub> = N<sub>S</sub> × Vmp<sub>cell</sub> · Imp<sub>array</sub> = N<sub>P,active</sub> × Imp<sub>cell</sub></code>
+        <code>P<sub>BOL/EOL</sub> = Vmp<sub>cell</sub> × Imp<sub>cell</sub> × N<sub>S,scenario</sub> × N<sub>P,active</sub></code>
+        <code>P<sub>scenario</sub> / P<sub>deployed</sub> = (N<sub>S,scenario</sub> × N<sub>P,active</sub>) / (N<sub>S,deployed</sub> × N<sub>P,deployed</sub>)</code>
+        <p>Deployed {metrics.nominalSeriesCells}S × {metrics.nominalParallelStrings}P · scenario {metrics.scenarioSeriesCells}S × {metrics.activeParallelStrings} active P · {metrics.arrayConfigurationPct.toFixed(1)}% of deployed power</p>
+        <p>{power.arrayFaultMode === "STRING_FAILURE" ? "String Failure locks series and parallel configuration to the deployed array; only failed parallel strings are removed." : "Nominal mode allows independent series and parallel trade-study sizing."}</p>
+        <p>Scenario raw BOL {metrics.bolArrayPowerW.toFixed(1)} W · raw EOL {metrics.eolArrayPowerW.toFixed(1)} W</p>
+        <code>P<sub>raw</sub> = P<sub>rating</sub> × R<sub>temp</sub> × R<sub>optical</sub> × R<sub>incidence</sub> × R<sub>irradiance</sub> × sunlight</code>
+        <code>{(power.energyConversionMode ?? "MPPT") === "DET" ? "PDET = min(Praw, Vbus × Iarray(Vbus)) × Rdistribution" : "Pbus = Praw × ηMPPT × Rdistribution"}</code>
         <p>Normal-sun net BOL {metrics.bolNetArrayPowerW.toFixed(1)} W · net EOL {metrics.eolNetArrayPowerW.toFixed(1)} W</p>
       </section>
       <section>
@@ -2057,21 +2201,31 @@ function CalculationToolkitContent({
           <div><dt>Pointing at nominal 0°</dt><dd>{(corrections.incidenceRetention * 100).toFixed(2)}%</dd></div>
           <div><dt>Irradiance / distance</dt><dd>{(corrections.irradianceRetention * 100).toFixed(2)}%</dd></div>
           <div><dt>Radiation, EOL / BOL</dt><dd>{metrics.radiationRetentionPct.toFixed(2)}%</dd></div>
+          <div><dt>Parallel-string availability</dt><dd>{metrics.stringAvailabilityPct.toFixed(2)}%</dd></div>
+          <div><dt>Array configuration / deployed</dt><dd>{metrics.arrayConfigurationPct.toFixed(2)}%</dd></div>
         </dl>
-        <p>Electrical combines MPPT, harness, mismatch, blocking-diode, and other system losses. Optical combines contamination and self-shadowing.</p>
+        <p>{(power.energyConversionMode ?? "MPPT") === "DET" ? `DET excludes MPPT efficiency and evaluates a preliminary piecewise-linear array I–V curve at the ${power.nominalBusVoltageV ?? 28} V nominal battery bus. A series-count change therefore moves the bus operating point as well as the raw array rating.` : "MPPT tracks the scenario EOL maximum-power point and applies its configured conversion efficiency."} Distribution combines harness, mismatch, blocking-diode, and other system losses. Optical combines contamination and self-shadowing.</p>
       </section>
       <section>
         <h3>Energy, load & battery</h3>
         <code>E = Σ ((P<sub>i</sub> + P<sub>i+1</sub>) / 2) × Δt / 3600</code>
         <code>ΔSOC = (P<sub>generation</sub> − P<sub>load</sub>) × Δt / (battery Wh × 3600) × 100</code>
-        <p>Analytical playback applies the {power.averageLoadW.toFixed(0)} W orbit-average load continuously. DIL playback ignores it and applies each operation/illumination maximum load.</p>
-        <p>Penumbra retains fractional generation but conservatively uses the eclipse load. Battery charge is bounded to 0–100%; charge/discharge conversion losses are not modeled separately.</p>
+        <p>Analytical playback applies the {power.averageLoadW.toFixed(0)} W orbit-average load continuously. DIL playback ignores that value and applies the entered maximum load for each operation’s separate sunlit or eclipse state. Net power at each step is effective bus generation minus the active load.</p>
+        <p>Penumbra retains fractional generation but conservatively uses the eclipse load. Effective bus available is array-side energy after MPPT/DET and distribution losses; it does not decrease merely because battery SOC is lower. SOC determines how much surplus can be stored and whether a deficit can be served.</p>
+      </section>
+      <section>
+        <h3>Mission-day ledger</h3>
+        <code>E<sub>net,day</sub> = E<sub>bus available,day</sub> − E<sub>consumption,day</sub></code>
+        <code>E<sub>cumulative,d</sub> = Σ<sub>1…d</sub> E<sub>net,day</sub></code>
+        <code>SOC<sub>start,d+1</sub> = SOC<sub>end,d</sub></code>
+        <p>Raw panel, effective bus available, consumption, and daily net are independently integrated for each mission day. Cumulative net carries the energy balance across days, while Start SOC and End SOC show the bounded battery state transfer.</p>
+        <p>Battery energy is clamped to 0–100%. Surplus at full SOC is shunted; demand remaining after empty SOC is unserved. Those values remain part of the audit calculation even though they are omitted from the compact mission-day table. Charge/discharge efficiency, battery voltage sag, C-rate, and charge-current limits are not modeled separately.</p>
       </section>
       <section>
         <h3>DIL interpretation</h3>
-        <p>{dilData ? dilPowerIsFactor ? `SOLAR_POWER_GENERATED is detected as a 0–100 ${dilData.referencePanelAxis ?? "reference-axis"} generation factor and scaled by corrected EOL array power.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts." : "No DIL is loaded. On import, SOLAR_POWER_GENERATED is treated as watts unless a valid 0–100 cosine-like reference-axis factor is detected."}</p>
+        <p>{dilData ? dilPowerIsFactor ? `SOLAR_POWER_GENERATED is detected as a 0–100 ${dilData.referencePanelAxis ?? "reference-axis"} generation factor and multiplied by the scenario-corrected EOL bus rating.` : `SOLAR_POWER_GENERATED is interpreted as a deployed-array measured-watt baseline${Math.abs(metrics.arrayConfigurationPct - 100) > 1e-9 ? ` and scaled by the ${metrics.arrayConfigurationPct.toFixed(1)}% scenario/deployed topology ratio` : ""}.` : "No DIL is loaded. On import, SOLAR_POWER_GENERATED is treated as watts unless a valid 0–100 cosine-like reference-axis factor is detected."}</p>
         <p>Modeled power uses the imported attitude/Sun geometry, the selected panel normal, eclipse fraction, EOL cell point, and all configured losses. Perfect power preserves eclipse and losses but fixes incidence at 0°.</p>
-        <p>DIL and modeled energy use trapezoidal integration over every original timestamp; the visible replay may be decimated only for rendering.</p>
+        <p>DIL and modeled energy use trapezoidal integration. The imported sequence is repeated or cropped to the mission duration before multi-day SOC and margin analysis; generation can repeat on later days, but battery SOC and cumulative net continue from the preceding day. The saved source file is not modified.</p>
       </section>
       <section>
         <h3>Geometry & scope assumptions</h3>
@@ -2244,16 +2398,20 @@ export default function SolarSizingDashboard() {
     () => runSimulation(mission, power, simulationSatellite.frames.payloadBoresightAxis),
     [mission, power, simulationSatellite.frames.payloadBoresightAxis],
   );
+  const effectiveDilData = useMemo(
+    () => dilData ? extrapolateDilData(dilData, Math.max(0, mission.durationDays) * 86400) : null,
+    [dilData, mission.durationDays],
+  );
   const configuredEpochMs = new Date(mission.epoch).getTime();
-  const illuminationEpochMs = dilData?.epochMs
+  const illuminationEpochMs = effectiveDilData?.epochMs
     ?? (Number.isFinite(configuredEpochMs) ? configuredEpochMs : Date.UTC(2026, 0, 1));
   const referencePowerCorrections = useMemo(
     () => arrayPowerCorrectionFactors(power, new Date(illuminationEpochMs), 0, 1),
     [illuminationEpochMs, power],
   );
   const dilEnergyAnalysis = useMemo(
-    () => dilData ? analyzeDilEnergy(dilData.energySeries, mission, power, dilData.epochMs, dilData.powerSemantics, dilData.referencePanelAxis) : null,
-    [dilData, mission, power],
+    () => effectiveDilData ? analyzeDilEnergy(effectiveDilData.energySeries, mission, power, effectiveDilData.epochMs, effectiveDilData.powerSemantics, effectiveDilData.referencePanelAxis) : null,
+    [effectiveDilData, mission, power],
   );
   const dilOperationMaxLoadsW = useMemo(() => Object.fromEntries(
     Object.entries(dilOperationMaxLoadInputs).map(([operation, value]) => [
@@ -2299,18 +2457,18 @@ export default function SolarSizingDashboard() {
   );
   const dilLoadProfileComplete = Boolean(dilLoadAnalysis?.complete);
   const dilPoints = useMemo(
-    () => dilData ? buildDilSimulation(
-      dilData.records,
+    () => effectiveDilData ? buildDilSimulation(
+      effectiveDilData.records,
       mission,
       power,
-      dilData.epochMs,
-      dilData.powerSemantics,
-      dilData.referencePanelAxis,
+      effectiveDilData.epochMs,
+      effectiveDilData.powerSemantics,
+      effectiveDilData.referencePanelAxis,
       simulationSatellite.frames.payloadBoresightAxis,
       dilOperationMaxLoadsW,
       dilLoadProfileComplete,
     ) : null,
-    [dilData, dilLoadProfileComplete, dilOperationMaxLoadsW, mission, power, simulationSatellite.frames.payloadBoresightAxis],
+    [effectiveDilData, dilLoadProfileComplete, dilOperationMaxLoadsW, mission, power, simulationSatellite.frames.payloadBoresightAxis],
   );
   const displayPoints = dilPoints?.length ? dilPoints : result.points;
   const sceneSunVector = useMemo(() => {
@@ -2320,10 +2478,14 @@ export default function SolarSizingDashboard() {
   }, [dilPoints, illuminationEpochMs]);
   const activeIndex = clamp(currentIndex, 0, displayPoints.length - 1);
   const current = displayPoints[activeIndex];
-  const currentDilRecord = dilData?.records[activeIndex] ?? null;
+  const currentDilRecord = effectiveDilData?.records[activeIndex] ?? null;
   const dilAxisSweep = useMemo(
-    () => dilData ? analyzeDilAxisSweep(dilData.energySeries, mission, power, dilData.epochMs, dilData.referencePanelAxis) : null,
-    [dilData, mission, power],
+    () => effectiveDilData ? analyzeDilAxisSweep(effectiveDilData.energySeries, mission, power, effectiveDilData.epochMs, effectiveDilData.referencePanelAxis) : null,
+    [effectiveDilData, mission, power],
+  );
+  const dailyEnergy = useMemo(
+    () => summarizeDailyEnergy(displayPoints, power.batteryWh),
+    [displayPoints, power.batteryWh],
   );
   const dilSummary = useMemo(() => {
     if (!dilPoints?.length || !dilEnergyAnalysis) return null;
@@ -2425,15 +2587,15 @@ export default function SolarSizingDashboard() {
       setCurrentIndex((index) => {
         const candidate = (index + playbackSpeed) % displayPoints.length;
         if (!dilData || candidate <= index) return candidate;
-        const currentOperation = dilData.records[index]?.spacecraftOperation;
+        const currentOperation = effectiveDilData?.records[index]?.spacecraftOperation;
         for (let next = index + 1; next <= candidate; next += 1) {
-          if (dilData.records[next]?.spacecraftOperation !== currentOperation) return next;
+          if (effectiveDilData?.records[next]?.spacecraftOperation !== currentOperation) return next;
         }
         return candidate;
       });
     }, 90);
     return () => window.clearInterval(timer);
-  }, [dilData, displayPoints.length, playbackSpeed, playing]);
+  }, [dilData, displayPoints.length, effectiveDilData, playbackSpeed, playing]);
 
   const updateMission = <K extends keyof MissionConfig>(key: K, value: MissionConfig[K]) => {
     setCurrentIndex(0);
@@ -2673,7 +2835,7 @@ export default function SolarSizingDashboard() {
       setDeployedSpacecraft(structuredClone(bundle.spacecraft.deployed));
       setEngineeringView(bundle.project.dashboard.engineeringView);
       setPlaybackSpeed(bundle.project.dashboard.playbackSpeed);
-      setPowerPlotVisibility({ ...bundle.project.dashboard.plotVisibility });
+      setPowerPlotVisibility({ ...DEFAULT_POWER_PLOT_VISIBILITY, ...bundle.project.dashboard.plotVisibility });
       setDilSampleIntervalSec(savedDil.sampleIntervalSec);
       setDilReferenceAxisOverride(savedDil.referenceAxisOverride);
       setDilSource(bundle.dilSource ? { ...bundle.dilSource } : null);
@@ -2779,23 +2941,24 @@ export default function SolarSizingDashboard() {
 
   const exportCsv = () => {
     const header = [
-      "time", "elapsed_time_s", "x_eci_km", "y_eci_km", "z_eci_km", "modeled_power_w", "dil_comparison_power_w",
+      "time", "elapsed_time_s", "x_eci_km", "y_eci_km", "z_eci_km", "raw_panel_power_w", "modeled_power_w", "dil_comparison_power_w",
       "perfect_pointing_power_w", "dil_generation_factor_pct", "dil_reference_axis", "spacecraft_operation",
       "load_illumination_state", "operation_max_load_w", "net_power_w", "soc_pct",
       "beta_deg", "incidence_deg", "shadow_factor", "illumination_state", "panel_facing_axis",
       "payload_earth_angle_deg", "payload_sun_angle_deg", "payload_pointing_residual_deg",
       "velocity_body_axis", "nadir_body_axis", "panel_rotation_x_deg",
       "panel_rotation_y_deg", "panel_rotation_z_deg", "panel_mounting", "wing_layout", "cell_model",
-      "series_cells", "parallel_strings", "bol_cell_vmp_v", "bol_cell_imp_a", "eol_cell_vmp_v", "eol_cell_imp_a",
+      "series_cells", "parallel_strings", "scenario_series_cells", "scenario_parallel_strings", "array_fault_mode", "failed_parallel_strings", "active_parallel_strings", "string_availability_pct", "power_vs_deployed_pct",
+      "bol_cell_vmp_v", "bol_cell_imp_a", "eol_cell_vmp_v", "eol_cell_imp_a",
       "eol_array_vmp_v", "eol_array_imp_a", "eol_array_power_w",
       "active_cell_area_m2", "packaged_area_m2", "fluence_1e14_cm2",
     ];
     const rows = displayPoints.map((point, index) => [
-      dilData?.records[index]?.timeLabel ?? new Date(illuminationEpochMs + point.tSec * 1000).toISOString(),
+      effectiveDilData?.records[index]?.timeLabel ?? new Date(illuminationEpochMs + point.tSec * 1000).toISOString(),
       point.tSec.toFixed(2), ...point.positionKm.map((value) => value.toFixed(5)),
-      point.powerW.toFixed(3), point.measuredPowerW?.toFixed(3) ?? "",
+      point.rawPanelPowerW?.toFixed(3) ?? "", point.powerW.toFixed(3), point.measuredPowerW?.toFixed(3) ?? "",
       point.perfectPointingPowerW?.toFixed(3) ?? "", point.dilGenerationFactorPct?.toFixed(4) ?? "",
-      dilData?.referencePanelAxis ?? "", dilData?.records[index]?.spacecraftOperation ?? "",
+      effectiveDilData?.referencePanelAxis ?? "", effectiveDilData?.records[index]?.spacecraftOperation ?? "",
       dilData ? dilLoadIlluminationState(point.shadowFactor) : "",
       point.operationLoadW?.toFixed(3) ?? "", point.netPowerW?.toFixed(3) ?? "",
       dilData && !dilLoadProfileComplete ? "" : point.socPct.toFixed(3), point.betaDeg.toFixed(4),
@@ -2806,7 +2969,9 @@ export default function SolarSizingDashboard() {
       mission.velocityBodyAxis, mission.nadirBodyAxis,
       mission.panelRotationXDeg, mission.panelRotationYDeg, mission.panelRotationZDeg,
       "FIXED_TO_SPACECRAFT", mission.wingLayout, power.cellModel,
-      power.seriesCells, power.parallelStrings, power.vmpV, power.impA, power.eolVmpV, power.eolImpA,
+      power.seriesCells, power.parallelStrings, result.metrics.scenarioSeriesCells, result.metrics.scenarioParallelStrings, power.arrayFaultMode ?? "NOMINAL",
+      result.metrics.failedParallelStrings, result.metrics.activeParallelStrings,
+      result.metrics.stringAvailabilityPct.toFixed(3), result.metrics.arrayConfigurationPct.toFixed(3), power.vmpV, power.impA, power.eolVmpV, power.eolImpA,
       result.metrics.arrayVmpV.toFixed(3), result.metrics.arrayImpA.toFixed(3),
       result.metrics.eolArrayPowerW.toFixed(3),
       result.metrics.activeCellAreaM2.toFixed(4), result.metrics.packagedAreaM2.toFixed(4),
@@ -2857,9 +3022,14 @@ export default function SolarSizingDashboard() {
 
   const batteryMinimumPct = dilSummary?.minSocPct ?? result.metrics.minSocPct;
   const primaryPowerNowW = dilSummary ? (current.measuredPowerW ?? 0) : current.powerW;
-  const primaryEnergyPositive = dilSummary
-    ? dilWorstCaseReady && (dilLoadAnalysis?.netEnergyWh ?? 0) >= 0
-    : marginPositive;
+  const currentDayNumber = Math.min(
+    Math.max(1, Math.floor(current.tSec / 86400) + 1),
+    Math.max(1, dailyEnergy.length),
+  );
+  const currentDayEnergy = dailyEnergy[currentDayNumber - 1] ?? dailyEnergy[0];
+  const currentDayLoadReady = !dilSummary || dilWorstCaseReady;
+  const currentDayNetEnergyWh = currentDayEnergy?.netEnergyWh ?? 0;
+  const primaryEnergyPositive = currentDayLoadReady && currentDayNetEnergyWh >= 0;
   const powerMetricState: PowerMetricState = dilSummary && !dilWorstCaseReady
     ? "neutral"
     : current.shadowFactor <= 0.02
@@ -2868,14 +3038,11 @@ export default function SolarSizingDashboard() {
   const energyMetricState: PowerMetricState = dilSummary && !dilWorstCaseReady
     ? "neutral"
     : primaryEnergyPositive ? "good" : "critical";
-  const dilToModeledMetricState: PowerMetricState = !dilSummary
-    ? "neutral"
-    : dilSummary.measuredToModeledPct >= 90 ? "good" : dilSummary.measuredToModeledPct >= 70 ? "watch" : "critical";
   const batteryMetricState: PowerMetricState = dilSummary && !dilWorstCaseReady
     ? "neutral"
-    : batteryMinimumPct >= 40
+    : (currentDayEnergy?.minSocPct ?? batteryMinimumPct) >= 40
     ? "good"
-    : batteryMinimumPct >= 20 ? "watch" : "critical";
+    : (currentDayEnergy?.minSocPct ?? batteryMinimumPct) >= 20 ? "watch" : "critical";
   const togglePowerPlot = (plot: keyof PowerPlotVisibility) => {
     setPowerPlotVisibility((currentVisibility) => ({
       ...currentVisibility,
@@ -2889,9 +3056,9 @@ export default function SolarSizingDashboard() {
         <tbody>
           <tr>
             <PowerMetricCell
-              label={dilData ? `${dilComparisonLabel} power` : "Power now"}
+              label={dilData ? `${dilComparisonLabel} effective power` : "Effective bus power"}
               value={`${primaryPowerNowW.toFixed(0)} W`}
-              note={dilData ? `Modeled ${current.powerW.toFixed(0)} W · imported DIL · ${Math.round(current.shadowFactor * 100)}% light` : `Corrected EOL MPP · ${Math.round(current.shadowFactor * 100)}% light · θ ${current.incidenceDeg.toFixed(1)}°`}
+              note={`Raw panel ${(current.rawPanelPowerW ?? primaryPowerNowW).toFixed(0)} W · ${power.energyConversionMode ?? "MPPT"} · ${Math.round(current.shadowFactor * 100)}% light`}
               state={powerMetricState}
               status={dilSummary && !dilWorstCaseReady
                 ? "Enter operation loads"
@@ -2902,23 +3069,23 @@ export default function SolarSizingDashboard() {
                     : dilSummary ? "Below max load" : "Below load"}
             />
             <PowerMetricCell
-              label={dilData ? `${dilComparisonLabel} energy / span` : "Generated energy / span"}
-              value={dilSummary ? `${dilSummary.measuredEnergyWh.toFixed(0)} Wh` : `${result.metrics.energyWh.toFixed(0)} Wh`}
-              note={dilSummary ? `Modeled ${dilSummary.modeledEnergyWh.toFixed(0)} Wh · perfect ceiling ${dilSummary.perfectPointingEnergyWh.toFixed(0)} Wh` : `${result.metrics.energyPerOrbitWh.toFixed(0)} Wh/orbit · ${result.metrics.averagePowerW.toFixed(0)} W average`}
+              label={`${dilData ? dilComparisonLabel : "Effective generation"} · day ${currentDayNumber}`}
+              value={`${(currentDayEnergy?.effectiveGenerationWh ?? 0).toFixed(0)} Wh`}
+              note={`Raw panel ${(currentDayEnergy?.rawPanelEnergyWh ?? 0).toFixed(0)} Wh · net ${currentDayLoadReady ? `${currentDayNetEnergyWh >= 0 ? "+" : ""}${currentDayNetEnergyWh.toFixed(0)} Wh` : "pending loads"}`}
               state={energyMetricState}
-              status={dilSummary && !dilWorstCaseReady ? "Generation only" : primaryEnergyPositive ? "Positive margin" : "Energy deficit"}
+              status={!currentDayLoadReady ? "Generation only" : primaryEnergyPositive ? "Positive margin" : "Energy deficit"}
             />
             <PowerMetricCell
-              label={dilData ? "Worst-case load / span" : "Eclipse / orbit"}
-              value={dilSummary ? dilWorstCaseReady ? `${dilLoadAnalysis?.loadEnergyWh?.toFixed(0)} Wh` : "—" : formatDuration(result.metrics.eclipsePerOrbitSec)}
-              note={dilSummary ? dilWorstCaseReady ? `${dilLoadAnalysis?.worstCaseAverageLoadW?.toFixed(1)} W OAP · net ${(dilLoadAnalysis?.netEnergyWh ?? 0) >= 0 ? "+" : ""}${dilLoadAnalysis?.netEnergyWh?.toFixed(1)} Wh` : `Enter max load for ${dilLoadAnalysis?.missingOperations.length ?? 0} active states` : "penumbra weighted"}
-              state={dilSummary ? energyMetricState : dilToModeledMetricState}
-              status={!dilSummary ? "Orbit model" : dilWorstCaseReady ? "Max-load profile" : "Load profile pending"}
+              label={`Satellite consumption · day ${currentDayNumber}`}
+              value={currentDayLoadReady ? `${(currentDayEnergy?.consumptionWh ?? 0).toFixed(0)} Wh` : "—"}
+              note={currentDayLoadReady ? `Net ${currentDayNetEnergyWh >= 0 ? "+" : ""}${currentDayNetEnergyWh.toFixed(0)} Wh · ${dilData ? "max-load profile" : `${power.averageLoadW.toFixed(1)} W constant load`}` : `Enter max load for ${dilLoadAnalysis?.missingOperations.length ?? 0} active states`}
+              state={energyMetricState}
+              status={currentDayLoadReady ? "Daily load" : "Load profile pending"}
             />
             <PowerMetricCell
-              label={dilData ? "Worst-case minimum battery" : "Minimum battery"}
-              value={dilSummary && !dilWorstCaseReady ? "—" : `${batteryMinimumPct.toFixed(0)}%`}
-              note={dilSummary && !dilWorstCaseReady ? "Complete operation loads to calculate SOC" : `${(dilSummary?.finalSocPct ?? result.metrics.finalSocPct).toFixed(0)}% final SOC`}
+              label={`Minimum battery · day ${currentDayNumber}`}
+              value={!currentDayLoadReady ? "—" : `${(currentDayEnergy?.minSocPct ?? batteryMinimumPct).toFixed(0)}%`}
+              note={!currentDayLoadReady ? "Complete operation loads to calculate SOC" : `${(currentDayEnergy?.endSocPct ?? result.metrics.finalSocPct).toFixed(0)}% end-of-day SOC`}
               state={batteryMetricState}
               status={dilSummary && !dilWorstCaseReady ? "Awaiting loads" : batteryMetricState === "good" ? "Healthy" : batteryMetricState === "watch" ? "Monitor reserve" : "Low reserve"}
             />
@@ -3045,7 +3212,7 @@ export default function SolarSizingDashboard() {
                 onChange={(value) => updateMission("argumentOfPerigeeDeg", value)}
               />
               <NumberField label="True anomaly at epoch" value={mission.trueAnomalyDeg} unit="deg" min={0} max={360} step={1} onChange={(value) => updateMission("trueAnomalyDeg", value)} />
-              <NumberField label="Duration" value={mission.durationDays} unit="days" min={2} max={30} step={0.5} onChange={(value) => updateMission("durationDays", value)} />
+              <NumberField label="Duration" value={mission.durationDays} unit="days" min={1} max={30} step={0.5} onChange={(value) => updateMission("durationDays", value)} />
             </div>
             <label className="date-field">
               <span>Mission epoch</span>
@@ -3140,6 +3307,7 @@ export default function SolarSizingDashboard() {
               <div><span>Sun-facing cell normal</span><b>{mission.panelFacingAxis}</b></div>
               <div><span>Wing layout</span><b>{mission.wingLayout === "DUAL" ? "Dual wing" : "Single wing"}</b></div>
               <div><span>Cell / strings</span><b>{deployedSpacecraft.array.cellModel} · {deployedSpacecraft.array.seriesCells}S × {deployedSpacecraft.array.parallelStrings}P</b></div>
+              <div><span>Scenario array</span><b>{result.metrics.scenarioSeriesCells}S × {result.metrics.activeParallelStrings}P vs {result.metrics.nominalSeriesCells}S × {result.metrics.nominalParallelStrings}P · {result.metrics.arrayConfigurationPct.toFixed(1)}% power</b></div>
               <div><span>BOL net array power</span><b>{result.metrics.bolNetArrayPowerW.toFixed(0)} W</b></div>
               <div><span>EOL net array power</span><b>{result.metrics.eolNetArrayPowerW.toFixed(0)} W</b></div>
               <div><span>Packaging</span><b>{power.packagingEfficiencyPct.toFixed(1)}%</b></div>
@@ -3149,7 +3317,70 @@ export default function SolarSizingDashboard() {
           </section>
 
           <section className="control-section">
-            <div className="section-heading"><span>03</span><h2>Power balance</h2></div>
+            <div className="section-heading"><span>03</span><h2>Array fault scenario</h2></div>
+            <p className="control-label">Electrical availability</p>
+            <div className="segmented" role="group" aria-label="Array fault scenario">
+              <button
+                type="button"
+                className={(power.arrayFaultMode ?? "NOMINAL") === "NOMINAL" ? "active" : ""}
+                aria-pressed={(power.arrayFaultMode ?? "NOMINAL") === "NOMINAL"}
+                onClick={() => updatePower("arrayFaultMode", "NOMINAL")}
+              >
+                Nominal
+              </button>
+              <button
+                type="button"
+                className={power.arrayFaultMode === "STRING_FAILURE" ? "active" : ""}
+                aria-pressed={power.arrayFaultMode === "STRING_FAILURE"}
+                onClick={() => updatePower("arrayFaultMode", "STRING_FAILURE")}
+              >
+                String failure
+              </button>
+            </div>
+            <div className="array-fault-input">
+              <NumberField
+                label="Scenario parallel strings"
+                value={result.metrics.scenarioParallelStrings}
+                unit={`deployed ${result.metrics.nominalParallelStrings}`}
+                min={1}
+                max={1000}
+                step={1}
+                disabled={power.arrayFaultMode === "STRING_FAILURE"}
+                onChange={(value) => updatePower("scenarioParallelStrings", Math.round(value))}
+              />
+              {(power.arrayFaultMode ?? "NOMINAL") === "NOMINAL" ? (
+                <NumberField
+                  label="Scenario series cells"
+                  value={result.metrics.scenarioSeriesCells}
+                  unit={`deployed ${result.metrics.nominalSeriesCells}`}
+                  min={1}
+                  max={1000}
+                  step={1}
+                  onChange={(value) => updatePower("scenarioSeriesCells", Math.round(value))}
+                />
+              ) : (
+                <NumberField
+                  label="Failed parallel strings"
+                  value={result.metrics.failedParallelStrings}
+                  unit={`of ${result.metrics.scenarioParallelStrings}`}
+                  min={0}
+                  max={result.metrics.scenarioParallelStrings}
+                  step={1}
+                  onChange={(value) => updatePower("failedParallelStrings", Math.round(value))}
+                />
+              )}
+            </div>
+            <div className="array-fault-readout" data-active={result.metrics.failedParallelStrings > 0 || result.metrics.scenarioSeriesCells !== result.metrics.nominalSeriesCells || result.metrics.scenarioParallelStrings !== result.metrics.nominalParallelStrings}>
+              <div><span>Deployed</span><b>{result.metrics.nominalSeriesCells}S × {result.metrics.nominalParallelStrings}P</b></div>
+              <div><span>Scenario</span><b>{result.metrics.scenarioSeriesCells}S × {result.metrics.scenarioParallelStrings}P</b></div>
+              <div><span>Active</span><b>{result.metrics.scenarioSeriesCells}S × {result.metrics.activeParallelStrings}P</b></div>
+              <div><span>Power vs deployed</span><b>{result.metrics.arrayConfigurationPct.toFixed(1)}%</b></div>
+            </div>
+            <p className="control-note">Mission-level trade study only. Nominal mode exposes both series and parallel sizing. String Failure mode replaces the series field with failed parallel strings. The saved spacecraft topology remains unchanged.</p>
+          </section>
+
+          <section className="control-section">
+            <div className="section-heading"><span>04</span><h2>Power balance</h2></div>
             <div className="field-grid">
               <NumberField label="Orbit-average load" value={power.averageLoadW} unit="W" min={0} max={10000} step={10} onChange={(value) => updatePower("averageLoadW", value)} />
               <NumberField label="Battery" value={power.batteryWh} unit="Wh" min={1} max={10000} step={10} onChange={(value) => updatePower("batteryWh", value)} />
@@ -3170,7 +3401,7 @@ export default function SolarSizingDashboard() {
               aria-expanded={calculationToolkitOpen}
               onClick={() => setCalculationToolkitOpen(true)}
             >
-              <span>04</span>
+              <span>05</span>
               <b>Calculation toolkit</b>
               <em>Open formulas & assumptions ↗</em>
             </button>
@@ -3290,6 +3521,7 @@ export default function SolarSizingDashboard() {
               <div className="card-heading">
                 <div><span className="eyebrow">POWER PROFILE</span><h2>Generation & battery</h2></div>
                 <div className={`chart-legend${dilData ? " dil-primary" : ""}`}>
+                  <button type="button" className={powerPlotVisibility.raw ? "active" : ""} aria-pressed={powerPlotVisibility.raw} aria-label={`${powerPlotVisibility.raw ? "Hide" : "Show"} raw panel plot`} onClick={() => togglePowerPlot("raw")}><i className="raw-key" /> Raw panel</button>
                   {dilData ? (
                     <>
                       <button type="button" className={powerPlotVisibility.primary ? "active" : ""} aria-pressed={powerPlotVisibility.primary} aria-label={`${powerPlotVisibility.primary ? "Hide" : "Show"} ${dilComparisonLabel} plot`} onClick={() => togglePowerPlot("primary")}><i className="measured-key" /> {dilComparisonLabel}</button>
@@ -3297,11 +3529,11 @@ export default function SolarSizingDashboard() {
                     </>
                   ) : <button type="button" className={powerPlotVisibility.primary ? "active" : ""} aria-pressed={powerPlotVisibility.primary} aria-label={`${powerPlotVisibility.primary ? "Hide" : "Show"} power plot`} onClick={() => togglePowerPlot("primary")}><i className="power-key" /> Power</button>}
                   {dilData && <button type="button" className={powerPlotVisibility.perfect ? "active" : ""} aria-pressed={powerPlotVisibility.perfect} aria-label={`${powerPlotVisibility.perfect ? "Hide" : "Show"} perfect ceiling plot`} onClick={() => togglePowerPlot("perfect")}><i className="ceiling-key" /> Perfect ceiling</button>}
-                  {dilData && <button type="button" className={powerPlotVisibility.load ? "active" : ""} aria-pressed={powerPlotVisibility.load} aria-label={`${powerPlotVisibility.load ? "Hide" : "Show"} maximum load plot`} onClick={() => togglePowerPlot("load")}><i className="load-key" /> {dilWorstCaseReady ? "Maximum load" : "Maximum load (partial)"}</button>}
+                  <button type="button" className={powerPlotVisibility.load ? "active" : ""} aria-pressed={powerPlotVisibility.load} aria-label={`${powerPlotVisibility.load ? "Hide" : "Show"} satellite consumption plot`} onClick={() => togglePowerPlot("load")}><i className="load-key" /> {dilData ? dilWorstCaseReady ? "Maximum load" : "Maximum load (partial)" : "Satellite consumption"}</button>
                   <button type="button" className={powerPlotVisibility.soc && (!dilData || dilWorstCaseReady) ? "active" : ""} aria-pressed={powerPlotVisibility.soc && (!dilData || dilWorstCaseReady)} aria-label={`${powerPlotVisibility.soc ? "Hide" : "Show"} battery SOC plot`} disabled={Boolean(dilData && !dilWorstCaseReady)} onClick={() => togglePowerPlot("soc")}><i className="soc-key" /> {dilData ? dilWorstCaseReady ? "SOC (max-load)" : "SOC pending loads" : "SOC"}</button>
                 </div>
               </div>
-              <PowerChart points={displayPoints} currentIndex={activeIndex} dilRecords={dilData?.records} dilPowerLabel={dilComparisonLabel} showSoc={!dilData || dilWorstCaseReady} visiblePlots={powerPlotVisibility} />
+              <PowerChart points={displayPoints} currentIndex={activeIndex} dilRecords={effectiveDilData?.records} dilPowerLabel={dilComparisonLabel} showSoc={!dilData || dilWorstCaseReady} visiblePlots={powerPlotVisibility} />
             </article>
 
             <article className="axis-card">
@@ -3326,6 +3558,32 @@ export default function SolarSizingDashboard() {
                 </p>
               </div>
             </article>
+          </section>
+
+          <section className="daily-energy-card">
+            <div className="card-heading">
+              <div><span className="eyebrow">MISSION-DAY ENERGY</span><h2>Panel generation, delivery & consumption</h2></div>
+              <span className="operation-count">{dailyEnergy.length} days · {power.energyConversionMode ?? "MPPT"}</span>
+            </div>
+            <div className={`daily-energy-table-wrap${dailyEnergy.length > 2 ? " is-scrollable" : ""}`}>
+              <table className="daily-energy-table">
+                <thead><tr><th>Day</th><th>Raw panel</th><th>Effective bus available</th><th>Consumption</th><th>Daily net</th><th>Cumulative net</th><th>Start SOC</th><th>End SOC</th></tr></thead>
+                <tbody>{dailyEnergy.map((day) => {
+                  const loadReady = !dilData || dilWorstCaseReady;
+                  return <tr key={day.day} className={day.day === currentDayNumber ? "current-day" : ""}>
+                    <td>Day {day.day}<small>{formatDuration(day.durationSec)}</small></td>
+                    <td>{day.rawPanelEnergyWh.toFixed(1)} Wh</td>
+                    <td>{day.effectiveGenerationWh.toFixed(1)} Wh</td>
+                    <td>{loadReady ? `${day.consumptionWh.toFixed(1)} Wh` : "Pending loads"}</td>
+                    <td className={!loadReady ? "" : day.netEnergyWh >= 0 ? "positive-energy" : "negative-energy"}>{loadReady ? `${day.netEnergyWh >= 0 ? "+" : ""}${day.netEnergyWh.toFixed(1)} Wh` : "—"}</td>
+                    <td className={!loadReady ? "" : day.cumulativeNetEnergyWh >= 0 ? "positive-energy" : "negative-energy"}>{loadReady ? `${day.cumulativeNetEnergyWh >= 0 ? "+" : ""}${day.cumulativeNetEnergyWh.toFixed(1)} Wh` : "—"}</td>
+                    <td>{loadReady ? `${day.startSocPct.toFixed(1)}%` : "—"}</td>
+                    <td>{loadReady ? `${day.endSocPct.toFixed(1)}%` : "—"}</td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+            <p className="operation-table-note">Raw panel is environmental EOL MPP potential before conversion. Effective bus available applies {power.energyConversionMode ?? "MPPT"}{(power.energyConversionMode ?? "MPPT") === "DET" ? ` at ${power.nominalBusVoltageV ?? 28} V nominal battery bus` : " tracking efficiency"} and configured distribution losses. Each day starts at the preceding day&apos;s end SOC. Daily net is that day&apos;s generation minus consumption; cumulative net carries the energy balance across mission days.</p>
           </section>
 
           {dilSummary && (
@@ -3451,18 +3709,16 @@ export default function SolarSizingDashboard() {
             )}
           </div>
 
-          {renderMissionPowerSummary("power-output-metrics")}
-
           <footer className="model-note">
             <span>MODEL SCOPE</span>
             <p>
-              {dilData && `DIL replay maps SATELLITE_POSITION directly into the Earth-centred scene. The global Sun and shadow direction are initialized from the first absolute DIL TIME and then held inertially fixed. For the declared reference axis with zero mounting rotation, an explicit imported incidence history is authoritative; this ensures a declared 0° reference angle produces normal-incidence power. Other signed axes and rotated mountings use each row's body-frame SUN_BODY. The imported reference panel axis is ${dilData.referencePanelAxis ?? "unassigned"}; it may come from SOLAR_PANEL_AXIS, a legacy signed-angle column, the import override, or automatic correlation inference. The importer measures and reports disagreement between that reference incidence and SUN_BODY because a large mismatch makes cross-axis comparisons physically inconsistent. Energy is trapezoid-integrated from every original DIL row before display decimation, including irregular timestamp intervals. ${dilPowerIsFactor ? `For this file, SOLAR_POWER_GENERATED is a 0–100 cosine-like ${dilData.referencePanelAxis ?? "panel"} reference factor and is scaled by the corrected net EOL array rating to produce DIL-derived watts.` : "SOLAR_POWER_GENERATED is interpreted directly as measured watts."} When all encountered operation/illumination maximum loads are entered, the imported DIL generation minus those loads drives the conservative worst-case battery SOC and OAP calculation; the default orbit-average load is ignored. Every operation has separate sunlit and eclipse profiles, with penumbra conservatively assigned to the eclipse load profile while its partial generation is retained. A perfect-pointing ceiling retains eclipse and electrical losses but removes attitude-incidence loss. Position magnitudes above 100,000 are treated as metres and converted to kilometres. `}
+              {dilData && `DIL replay maps SATELLITE_POSITION directly into the Earth-centred scene. The global Sun and shadow direction are initialized from the first absolute DIL TIME and then held inertially fixed. For the declared reference axis with zero mounting rotation, an explicit imported incidence history is authoritative; this ensures a declared 0° reference angle produces normal-incidence power. Other signed axes and rotated mountings use each row's body-frame SUN_BODY. The imported reference panel axis is ${dilData.referencePanelAxis ?? "unassigned"}; it may come from SOLAR_PANEL_AXIS, a legacy signed-angle column, the import override, or automatic correlation inference. The importer measures and reports disagreement between that reference incidence and SUN_BODY because a large mismatch makes cross-axis comparisons physically inconsistent. Energy is trapezoid-integrated from every original DIL row before display decimation, including irregular timestamp intervals. ${dilPowerIsFactor ? `For this file, SOLAR_POWER_GENERATED is a 0–100 cosine-like ${dilData.referencePanelAxis ?? "panel"} reference factor and is scaled by the corrected scenario net EOL array rating to produce DIL-derived watts.` : `SOLAR_POWER_GENERATED is interpreted as a deployed-configuration measured-watt baseline${Math.abs(result.metrics.arrayConfigurationPct - 100) > 1e-9 ? ` and scaled to ${result.metrics.arrayConfigurationPct.toFixed(1)}% for the selected array scenario` : ""}.`} When all encountered operation/illumination maximum loads are entered, the imported DIL generation minus those loads drives the conservative worst-case battery SOC and OAP calculation; the default orbit-average load is ignored. Every operation has separate sunlit and eclipse profiles, with penumbra conservatively assigned to the eclipse load profile while its partial generation is retained. A perfect-pointing ceiling retains eclipse and electrical losses but removes attitude-incidence loss. Position magnitudes above 100,000 are treated as metres and converted to kilometres. `}
               Preliminary design only. Keplerian propagation uses semi-major-axis altitude, eccentricity, argument of perigee and true anomaly at epoch, with secular J2 RAAN/perigee drift, analytical Sun position and
-              spherical-Earth conical eclipse. The deployed panel is rigidly mounted to the spacecraft; there is no ideal Sun tracker.
+              spherical-Earth conical eclipse with explicit penumbra and umbra states. The deployed panel is rigidly mounted to the spacecraft; there is no ideal Sun tracker.
               Signed body-axis assignments map velocity and nadir/pointing references into the spacecraft frame, while mounting
-              rotations are applied sequentially about body X, then Y, then Z. Array output uses EOL cell Vmp × Imp, configured
-              series-parallel topology, angular-response exponent, pointing uncertainty, Sun–Earth distance, constant-temperature Pmp correction, conical eclipse, MPPT/harness efficiencies, mismatch/diode/contamination/self-shadowing and other system losses. Catalog EOL points are not interpolated.
-              The analytical Sun/shadow direction is locked from mission epoch while LTAN defines the SSO orbit plane. Earth texture phase is initialized from GMST and advances at the sidereal rotation rate. The Earth rendering remains visual context rather than a geodetic map. Operating temperature and self-shadowing are equivalent constant inputs; detailed thermal time histories, CAD ray tracing, spectral response, albedo and transient MPPT operating limits remain outside this preliminary model.
+              rotations are applied sequentially about body X, then Y, then Z. Array output uses EOL cell data, configured
+              deployed and scenario series-parallel topology, selected parallel-string failure availability, angular-response exponent, pointing uncertainty, Sun–Earth distance, constant-temperature Pmp correction, conical eclipse, the selected MPPT or DET conversion path, harness efficiency, mismatch/diode/contamination/self-shadowing and other system losses. DET evaluates a preliminary piecewise-linear array I–V curve at nominal battery-bus voltage. Catalog EOL points are not interpolated.
+              The analytical Sun/shadow direction is locked from mission epoch while LTAN defines the SSO orbit plane. Earth texture phase is initialized from GMST and advances at the sidereal rotation rate. The Earth rendering remains visual context rather than a geodetic map. DIL sequences repeat to the configured mission duration for multi-day energy and SOC analysis. Operating temperature and self-shadowing are equivalent constant inputs; detailed thermal time histories, CAD ray tracing, spectral response, albedo, charge/discharge efficiency, battery current limits, and transient regulator limits remain outside this preliminary model.
             </p>
           </footer>
           </section>

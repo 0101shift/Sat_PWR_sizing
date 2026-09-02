@@ -33,7 +33,6 @@ import {
   SATELLITE_PART_CATALOG,
   createCustomSatelliteDraft,
   createSubsystemFromPart,
-  customAssemblyTotals,
   validateSatelliteAssembly,
   type PartCategory,
 } from "../lib/satellite-parts";
@@ -150,9 +149,16 @@ function buildSatelliteModel(item: SatelliteInventoryItem, deployment: number, s
   const arrayMount = new THREE.Group();
   arrayMount.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), axisVector(item.frames.solarCellNormalAxis));
   const wingCount = item.array.wingLayout === "dual" ? 2 : 1;
-  const panelGap = item.array.panelLengthM * 0.018;
-  const segmentLength =
-    (item.array.panelLengthM - panelGap * (item.array.panelsPerWing - 1)) / item.array.panelsPerWing;
+  const panelCount = Math.max(1, Math.round(item.array.panelsPerWing));
+  const foldDirection = panelCount > 2 ? item.array.foldDirection ?? "lateral" : "lateral";
+  const panelGap = (foldDirection === "lateral" ? item.array.panelLengthM : item.array.panelWidthM) * 0.018;
+  const segmentLength = foldDirection === "lateral"
+    ? (item.array.panelLengthM - panelGap * (panelCount - 1)) / panelCount
+    : item.array.panelLengthM;
+  const segmentWidth = foldDirection === "longitudinal"
+    ? (item.array.panelWidthM - panelGap * (panelCount - 1)) / panelCount
+    : item.array.panelWidthM;
+  const panelThickness = Math.max(longestBusSide * 0.018, 0.012);
   const panelMaterial = new THREE.MeshStandardMaterial({
     color: 0x153f68,
     emissive: 0x061526,
@@ -171,23 +177,56 @@ function buildSatelliteModel(item: SatelliteInventoryItem, deployment: number, s
       localDeploymentAxis,
       sign * (1 - deployment) * THREE.MathUtils.degToRad(item.array.deployedAngleDeg),
     );
-    for (let panelIndex = 0; panelIndex < item.array.panelsPerWing; panelIndex += 1) {
+    let previousLink: THREE.Group = pivot;
+    for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+      const link = new THREE.Group();
+      link.name = `solar-panel-link-${sign}-${panelIndex + 1}`;
       const panel = new THREE.Mesh(
-        new THREE.BoxGeometry(segmentLength, item.array.panelWidthM, Math.max(longestBusSide * 0.018, 0.012)),
+        new THREE.BoxGeometry(segmentLength, segmentWidth, panelThickness),
         panelMaterial,
       );
-      panel.position.x = sign * (segmentLength / 2 + panelIndex * (segmentLength + panelGap));
+      panel.name = `solar-panel-${sign}-${panelIndex + 1}`;
+      if (foldDirection === "lateral") {
+        if (panelIndex > 0) {
+          link.position.x = sign * (segmentLength + panelGap);
+          link.rotation.y = (panelIndex % 2 === 1 ? -sign : sign) * (1 - deployment) * Math.PI;
+        }
+        panel.position.x = sign * segmentLength / 2;
+      } else {
+        link.position.y = panelIndex === 0 ? -item.array.panelWidthM / 2 : segmentWidth + panelGap;
+        if (panelIndex > 0) {
+          link.rotation.x = (panelIndex % 2 === 1 ? sign : -sign) * (1 - deployment) * Math.PI;
+        }
+        panel.position.x = sign * item.array.panelLengthM / 2;
+        panel.position.y = segmentWidth / 2;
+      }
       panel.castShadow = true;
-      addPanelGrid(panel, segmentLength, item.array.panelWidthM);
-      pivot.add(panel);
+      addPanelGrid(panel, segmentLength, segmentWidth);
+      link.add(panel);
+      if (panelIndex > 0) {
+        const hingeLength = foldDirection === "lateral" ? segmentWidth * 0.9 : item.array.panelLengthM * 0.9;
+        const hinge = new THREE.Mesh(
+          new THREE.CylinderGeometry(panelThickness * 0.72, panelThickness * 0.72, hingeLength, 12),
+          darkMaterial,
+        );
+        hinge.name = `solar-panel-hinge-${sign}-${panelIndex}`;
+        if (foldDirection === "longitudinal") {
+          hinge.rotation.z = Math.PI / 2;
+          hinge.position.x = sign * item.array.panelLengthM / 2;
+        }
+        link.add(hinge);
+      }
+      previousLink.add(link);
+      previousLink = link;
     }
     const boom = new THREE.Mesh(
       new THREE.CylinderGeometry(equipmentScale * 0.18, equipmentScale * 0.18, item.array.panelLengthM, 12),
       darkMaterial,
     );
     boom.rotation.z = Math.PI / 2;
-    boom.position.x = sign * item.array.panelLengthM / 2;
+    boom.position.x = sign * item.array.panelLengthM / 2 * deployment;
     boom.position.y = -item.array.panelWidthM * 0.54;
+    boom.scale.y = Math.max(0.08, deployment);
     pivot.add(boom);
     arrayMount.add(pivot);
   });
@@ -247,7 +286,8 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
   deployment: number;
   showAxes: boolean;
   environmentContext?: SatelliteEnvironmentContext;
-}>(({ item, deployment, showAxes, environmentContext }, ref) => {
+  showEnvironment?: boolean;
+}>(({ item, deployment, showAxes, environmentContext, showEnvironment = true }, ref) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -264,6 +304,7 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
     const bus = Math.max(...Object.values(item.geometry.dimensionsM));
     const span = item.array.panelLengthM * (item.array.wingLayout === "dual" ? 2.2 : 1.35) + bus;
     const distance = Math.max(span * 1.28, bus * 4.2, 1.8);
+    controls.target.set(0, 0, 0);
     const direction = preserveDirection
       ? camera.position.clone().sub(controls.target).normalize()
       : new THREE.Vector3(0.72, 0.48, 0.88).normalize();
@@ -272,7 +313,6 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
     camera.near = Math.max(distance / 1000, 0.001);
     camera.far = distance * 100;
     camera.updateProjectionMatrix();
-    controls.target.set(0, 0, 0);
     controls.update();
   };
 
@@ -285,7 +325,7 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
     if (!mount) return;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x04090d);
-    scene.fog = new THREE.FogExp2(0x04090d, 0.018);
+    scene.fog = showEnvironment ? new THREE.FogExp2(0x04090d, 0.018) : null;
     const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
@@ -313,9 +353,12 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
 
     const environmentGroup = new THREE.Group();
     environmentGroup.name = "mission-environment";
-    const earthTexture = new THREE.TextureLoader().load("/earth-blue-marble.png");
-    earthTexture.colorSpace = THREE.SRGBColorSpace;
-    earthTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+    environmentGroup.visible = showEnvironment;
+    const earthTexture = showEnvironment ? new THREE.TextureLoader().load("/earth-blue-marble.png") : null;
+    if (earthTexture) {
+      earthTexture.colorSpace = THREE.SRGBColorSpace;
+      earthTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+    }
     earthTextureRef.current = earthTexture;
     const earth = new THREE.Mesh(
       new THREE.SphereGeometry(1, 64, 40),
@@ -360,7 +403,9 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
     }
     const starGeometry = new THREE.BufferGeometry();
     starGeometry.setAttribute("position", new THREE.Float32BufferAttribute(stars, 3));
-    scene.add(new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0xaac7d5, size: 0.075 })));
+    const starField = new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0xaac7d5, size: 0.075 }));
+    starField.visible = showEnvironment;
+    scene.add(starField);
 
     sceneRef.current = scene;
     cameraRef.current = camera;
@@ -387,7 +432,7 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
       observer.disconnect();
       controls.dispose();
       disposeTree(scene);
-      earthTexture.dispose();
+      earthTexture?.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       sceneRef.current = null;
@@ -396,7 +441,7 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
       environmentRef.current = null;
       earthTextureRef.current = null;
     };
-  }, []);
+  }, [showEnvironment]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -418,11 +463,11 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
         modelRef.current = null;
       }
     };
-  }, [item, deployment, showAxes]);
+  }, [item, deployment, showAxes, showEnvironment]);
 
   useEffect(() => {
     const objects = environmentRef.current;
-    if (!objects) return;
+    if (!objects || !showEnvironment) return;
     const normalizedDirection = (vector: Vector3 | undefined, fallback: THREE.Vector3) => {
       if (!vector) return fallback.clone().normalize();
       const direction = new THREE.Vector3(vector[0], vector[1], vector[2]);
@@ -461,7 +506,7 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
     objects.sunLight.position.copy(sunDirection).multiplyScalar(contextSpan * 3.5);
     objects.sunLight.target.position.set(0, 0, 0);
     objects.sunLight.intensity = 1.1 + Math.max(0, Math.min(1, environmentContext?.shadowFactor ?? 1)) * 3.1;
-  }, [environmentContext, item.array.panelLengthM, item.array.wingLayout, item.frames.nadirAxis, item.frames.velocityAxis, item.geometry.dimensionsM, showAxes]);
+  }, [environmentContext, item.array.panelLengthM, item.array.wingLayout, item.frames.nadirAxis, item.frames.velocityAxis, item.geometry.dimensionsM, showAxes, showEnvironment]);
 
   useEffect(() => {
     fitView(fittedItemIdRef.current === item.id);
@@ -477,6 +522,7 @@ const SatelliteViewer = forwardRef<ViewerHandle, {
     item.array.panelsPerWing,
     item.array.panelLengthM,
     item.array.panelWidthM,
+    item.array.foldDirection,
   ]);
 
   return <div className={styles.viewerMount} ref={mountRef} aria-label={`Interactive 3D view of ${item.name}`} />;
@@ -557,6 +603,7 @@ function CustomFlightConfiguration({
       <div className={styles.fieldGrid2}>
         <label className={styles.field}><span>Panel sides</span><select value={item.array.wingLayout} onChange={(event) => onUpdate((draft) => { draft.array.wingLayout = event.target.value as "single" | "dual"; })}><option value="single">Single side</option><option value="dual">Dual side</option></select></label>
         <NumericField label="Panels / side" value={item.array.panelsPerWing} min={1} max={8} onChange={(value) => onUpdate((draft) => { draft.array.panelsPerWing = Math.round(value); })} />
+        {item.array.panelsPerWing > 2 && <label className={styles.field}><span>Fold direction</span><select value={item.array.foldDirection ?? "lateral"} onChange={(event) => onUpdate((draft) => { draft.array.foldDirection = event.target.value as "lateral" | "longitudinal"; })}><option value="lateral">Lateral · hinged zig-zag along wing</option><option value="longitudinal">Longitudinal · hinged zig-zag across wing</option></select></label>}
         <NumericField label="Wing length" value={item.array.panelLengthM} min={0.05} step={0.05} unit="m" onChange={(value) => onUpdate((draft) => { draft.array.panelLengthM = value; })} />
         <NumericField label="Wing width" value={item.array.panelWidthM} min={0.05} step={0.05} unit="m" onChange={(value) => onUpdate((draft) => { draft.array.panelWidthM = value; })} />
         <label className={styles.field}><span>Deployment axis</span><select value={item.array.deploymentAxis} onChange={(event) => onUpdate((draft) => { draft.array.deploymentAxis = event.target.value as BodyAxis; })}>{BODY_AXES.map((axis) => <option key={axis}>{axis}</option>)}</select></label>
@@ -572,7 +619,10 @@ function CustomFlightConfiguration({
         <NumericField label="Parallel strings" value={item.array.parallelStrings} min={1} onChange={(value) => onUpdate((draft) => { draft.array.parallelStrings = Math.round(value); })} />
         <NumericField label="Packaging efficiency" value={item.array.packagingEfficiency * 100} min={1} max={100} step={0.1} unit="%" onChange={(value) => onUpdate((draft) => { draft.array.packagingEfficiency = value / 100; })} />
         <NumericField label="Operating temperature" value={item.array.operatingTemperatureC} min={-150} max={200} unit="°C" onChange={(value) => onUpdate((draft) => { draft.array.operatingTemperatureC = value; })} />
-        <NumericField label="MPPT efficiency" value={item.powerDefaults.mpptEfficiency * 100} min={1} max={100} step={0.1} unit="%" onChange={(value) => onUpdate((draft) => { draft.powerDefaults.mpptEfficiency = value / 100; })} />
+        <label className={styles.field}><span>Energy conversion</span><select value={item.powerDefaults.energyConversionMode ?? "MPPT"} onChange={(event) => onUpdate((draft) => { draft.powerDefaults.energyConversionMode = event.target.value as "MPPT" | "DET"; })}><option value="MPPT">MPPT</option><option value="DET">DET · direct energy transfer</option></select></label>
+        {(item.powerDefaults.energyConversionMode ?? "MPPT") === "MPPT"
+          ? <NumericField label="MPPT efficiency" value={item.powerDefaults.mpptEfficiency * 100} min={1} max={100} step={0.1} unit="%" onChange={(value) => onUpdate((draft) => { draft.powerDefaults.mpptEfficiency = value / 100; })} />
+          : <NumericField label="Nominal battery bus voltage" value={item.powerDefaults.nominalBusVoltageV ?? 28} min={1} max={200} step={0.1} unit="V" onChange={(value) => onUpdate((draft) => { draft.powerDefaults.nominalBusVoltageV = value; })} />}
         <NumericField label="Harness efficiency" value={(item.powerDefaults.harnessEfficiency ?? 1) * 100} min={1} max={100} step={0.1} unit="%" onChange={(value) => onUpdate((draft) => { draft.powerDefaults.harnessEfficiency = value / 100; })} />
       </div>
       <label className={styles.field}><span>EOL fluence data point</span><select value={item.powerDefaults.fluenceE14Cm2 ?? 5} onChange={(event) => onUpdate((draft) => { draft.powerDefaults.fluenceE14Cm2 = Number(event.target.value); })}>{FLUENCE_OPTIONS.map((fluence) => <option key={fluence} value={fluence}>{fluence === 0 ? "BOL / 0" : `${fluence} × 10¹⁴ cm⁻²`}</option>)}</select></label>
@@ -593,6 +643,7 @@ function CustomFlightConfiguration({
 }
 
 function ReadOnlyFlightConfiguration({ item }: { item: SatelliteInventoryItem }) {
+  const conversionMode = item.powerDefaults.energyConversionMode ?? "MPPT";
   const rows: Array<[string, string]> = [
     ["Cell model", item.array.cellModel],
     ["String configuration", `${item.array.seriesCells}S × ${item.array.parallelStrings}P`],
@@ -604,7 +655,10 @@ function ReadOnlyFlightConfiguration({ item }: { item: SatelliteInventoryItem })
     ["Pmp temperature coefficient", `${item.powerDefaults.powerTempCoefficientPctC ?? -0.08} %/°C`],
     ["Pointing uncertainty", `${item.powerDefaults.pointingErrorDeg ?? 0}°`],
     ["Angular-response exponent", String(item.powerDefaults.angularResponseExponent ?? 1)],
-    ["MPPT efficiency", `${((item.powerDefaults.mpptEfficiency ?? 1) * 100).toFixed(1)}%`],
+    ["Energy conversion", conversionMode],
+    ...(conversionMode === "DET"
+      ? [["Nominal battery bus voltage", `${item.powerDefaults.nominalBusVoltageV ?? 28} V`] as [string, string]]
+      : [["MPPT efficiency", `${((item.powerDefaults.mpptEfficiency ?? 1) * 100).toFixed(1)}%`] as [string, string]]),
     ["Harness efficiency", `${((item.powerDefaults.harnessEfficiency ?? 1) * 100).toFixed(1)}%`],
     ["Mismatch loss", `${item.powerDefaults.mismatchLossPct ?? 0}%`],
     ["Blocking-diode loss", `${item.powerDefaults.diodeLossPct ?? 0}%`],
@@ -628,6 +682,7 @@ function ReadOnlyFlightConfiguration({ item }: { item: SatelliteInventoryItem })
       <div className={styles.readOnlyGrid}>
         <div><span>Panel sides</span><b>{item.array.wingLayout === "dual" ? "Dual side" : "Single side"}</b></div>
         <div><span>Panels / side</span><b>{item.array.panelsPerWing}</b></div>
+        {item.array.panelsPerWing > 2 && <div><span>Fold direction</span><b>{item.array.foldDirection === "longitudinal" ? "Longitudinal" : "Lateral"}</b></div>}
         <div><span>Wing length</span><b>{item.array.panelLengthM} m</b></div>
         <div><span>Wing width</span><b>{item.array.panelWidthM} m</b></div>
         <div><span>Deployment axis</span><b>{item.array.deploymentAxis}</b></div>
@@ -651,7 +706,6 @@ function CustomBuildWorkspace({
   onReplayDeployment,
   showAxes,
   setShowAxes,
-  environmentContext,
   notice,
   setNotice,
   onSave,
@@ -668,7 +722,6 @@ function CustomBuildWorkspace({
   onReplayDeployment: () => void;
   showAxes: boolean;
   setShowAxes: Dispatch<SetStateAction<boolean>>;
-  environmentContext?: SatelliteEnvironmentContext;
   notice: string;
   setNotice: Dispatch<SetStateAction<string>>;
   onSave: (item: SatelliteInventoryItem) => void;
@@ -682,11 +735,10 @@ function CustomBuildWorkspace({
   const [mountAxis, setMountAxis] = useState<BodyAxis>(SATELLITE_PART_CATALOG[0].defaultMountAxis);
   const [selectedSubsystemId, setSelectedSubsystemId] = useState<string | null>(null);
   const [projectTargetId, setProjectTargetId] = useState(activeProjectId ?? projectTargets[0]?.id ?? "");
-  const viewerRef = useRef<ViewerHandle>(null);
+  const builderViewerRef = useRef<ViewerHandle>(null);
   const visibleParts = SATELLITE_PART_CATALOG.filter((part) => part.category === category);
   const catalogPart = SATELLITE_PART_CATALOG.find((part) => part.id === catalogPartId) ?? visibleParts[0];
   const selectedSubsystem = draft.subsystems?.find((part) => part.id === selectedSubsystemId);
-  const totals = useMemo(() => customAssemblyTotals(draft), [draft]);
   const issues = useMemo(() => validateSatelliteAssembly(draft), [draft]);
   const errorCount = issues.filter((issue) => issue.severity === "error").length;
   const resolvedProjectTargetId = projectTargets.some((project) => project.id === projectTargetId)
@@ -831,7 +883,7 @@ function CustomBuildWorkspace({
           {visibleParts.map((part) => (
             <button type="button" key={part.id} className={`${styles.partCard} ${catalogPart?.id === part.id && !selectedSubsystem ? styles.selectedPart : ""}`} onClick={() => chooseCatalogPart(part.id)}>
               <i data-kind={part.kind} />
-              <span><strong>{part.name}</strong><small>{part.massKg} kg · {part.nominalPowerW} W</small></span>
+              <span><strong>{part.name}</strong><small>{part.envelopeM.x} × {part.envelopeM.y} × {part.envelopeM.z} m</small></span>
             </button>
           ))}
         </div>
@@ -845,13 +897,16 @@ function CustomBuildWorkspace({
         <div className={styles.viewerHeader}>
           <div><small>CUSTOM ASSEMBLY / LIVE 3D</small><h2>{draft.name}</h2></div>
           <div className={styles.viewerTools}>
+            <button type="button" className={deployment <= 0.05 ? styles.activeTool : ""} onClick={() => setDeployment(0)}>Stowed</button>
+            <button type="button" className={deployment >= 0.95 ? styles.activeTool : ""} onClick={() => setDeployment(1)}>Deployed</button>
             <button type="button" className={showAxes ? styles.activeTool : ""} onClick={() => setShowAxes((value) => !value)}>Axes &amp; vectors</button>
-            <button type="button" onClick={() => viewerRef.current?.resetView()}>Fit / reset</button>
+            <button type="button" onClick={() => builderViewerRef.current?.resetView()}>Fit / reset</button>
           </div>
         </div>
         <div className={`${styles.viewerFrame} ${styles.builderViewerFrame}`}>
-          <SatelliteViewer ref={viewerRef} item={draft} deployment={deployment} showAxes={showAxes} environmentContext={environmentContext} />
+          <SatelliteViewer ref={builderViewerRef} item={draft} deployment={deployment} showAxes={showAxes} showEnvironment={false} />
           <div className={styles.builderBadge}><span>FACE MOUNTING</span><b>{selectedSubsystem ? `${selectedSubsystem.name} · ${selectedSubsystem.mountAxis}` : "Select a part from the library"}</b></div>
+          <div className={styles.dimensionReadout}><span>BUS ENVELOPE</span><b>{draft.geometry.dimensionsM.x} × {draft.geometry.dimensionsM.y} × {draft.geometry.dimensionsM.z} m</b></div>
           <div className={styles.customAxisLegend}>
             <strong>BODY AXES</strong>
             <span><i className={styles.axisX} />+X</span><span><i className={styles.axisY} />+Y</span><span><i className={styles.axisZ} />+Z</span>
@@ -861,13 +916,14 @@ function CustomBuildWorkspace({
             <span><i className={styles.axisPayload} />PAYLOAD {draft.frames.payloadBoresightAxis}</span>
             <span><i className={styles.axisSun} />PANEL FACING {draft.frames.solarCellNormalAxis}</span>
             <span><i className={styles.axisDeploy} />SOLAR DEPLOY {draft.array.deploymentAxis}</span>
+            {draft.array.panelsPerWing > 2 && <span><i className={styles.axisFold} />FOLD {(draft.array.foldDirection ?? "lateral").toUpperCase()}</span>}
           </div>
           <div className={styles.viewerReadout}><span>DRAG · ROTATE</span><span>WHEEL · ZOOM</span><span>RIGHT DRAG · PAN</span></div>
         </div>
         <div className={styles.assemblyStats}>
-          <article><small>ASSEMBLED MASS</small><strong>{totals.massKg.toFixed(1)} kg</strong></article>
-          <article><small>PARTS INSTALLED</small><strong>{totals.partCount}</strong></article>
-          <article><small>NOMINAL LOAD</small><strong>{totals.nominalPowerW.toFixed(0)} W</strong></article>
+          <article><small>BUS ENVELOPE</small><strong>{draft.geometry.dimensionsM.x} × {draft.geometry.dimensionsM.y} × {draft.geometry.dimensionsM.z} m</strong></article>
+          <article><small>ARRAY PANEL</small><strong>{draft.array.panelLengthM} × {draft.array.panelWidthM} m</strong></article>
+          <article><small>PARTS INSTALLED</small><strong>{draft.subsystems?.length ?? 0}</strong></article>
           <article><small>VALIDATION</small><strong className={errorCount > 0 ? styles.validationError : styles.validationOk}>{errorCount > 0 ? `${errorCount} error${errorCount === 1 ? "" : "s"}` : "Ready"}</strong></article>
         </div>
         <div className={styles.assemblyTree}>
@@ -899,6 +955,24 @@ function CustomBuildWorkspace({
             <label className={styles.field}><span>Intended use</span><textarea value={draft.intendedUse} rows={2} onChange={(event) => updateDraft((next) => { next.intendedUse = event.target.value; })} /></label>
           </section>
 
+          <section className={styles.formSection}>
+            <div className={styles.formSectionTitle}><h3>Bus dimensions</h3><span>DIMENSIONS ONLY</span></div>
+            <div className={styles.fieldGrid3}>
+              {(["x", "y", "z"] as const).map((axis) => (
+                <NumericField
+                  key={axis}
+                  label={`${axis.toUpperCase()} dimension`}
+                  value={draft.geometry.dimensionsM[axis]}
+                  min={0.05}
+                  max={20}
+                  step={0.01}
+                  unit="m"
+                  onChange={(value) => updateDraft((next) => { next.geometry.dimensionsM[axis] = value; })}
+                />
+              ))}
+            </div>
+          </section>
+
           <CustomFlightConfiguration item={draft} onUpdate={updateDraft} />
 
           {!selectedSubsystem && catalogPart && <section className={styles.formSection}>
@@ -920,9 +994,11 @@ function CustomBuildWorkspace({
             <label className={styles.field}><span>Body mounting face</span><select value={selectedSubsystem.mountAxis} onChange={(event) => updateSubsystem((part) => { part.mountAxis = event.target.value as BodyAxis; if (part.functionalAxis && part.kind !== "solar_array") part.functionalAxis = part.mountAxis; })}>{BODY_AXES.map((axis) => <option key={axis}>{axis}</option>)}</select></label>
             {selectedSubsystem.kind === "solar_array" && <div className={styles.solarAxisControls}>
               <label className={styles.field}><span>Panel sides</span><select value={draft.array.wingLayout} onChange={(event) => updateDraft((next) => { next.array.wingLayout = event.target.value as "single" | "dual"; })}><option value="single">Single side</option><option value="dual">Dual side</option></select></label>
+              <NumericField label="Wing length" value={draft.array.panelLengthM} min={0.05} max={20} step={0.05} unit="m" onChange={(value) => updateDraft((next) => { next.array.panelLengthM = value; })} />
               <label className={styles.field}><span>Deployment axis (wing extension)</span><select value={draft.array.deploymentAxis} onChange={(event) => updateDraft((next) => { next.array.deploymentAxis = event.target.value as BodyAxis; })}>{BODY_AXES.map((axis) => <option key={axis}>{axis}</option>)}</select></label>
+              {draft.array.panelsPerWing > 2 && <label className={styles.field}><span>Fold direction</span><select value={draft.array.foldDirection ?? "lateral"} onChange={(event) => updateDraft((next) => { next.array.foldDirection = event.target.value as "lateral" | "longitudinal"; })}><option value="lateral">Lateral · hinged zig-zag along wing</option><option value="longitudinal">Longitudinal · hinged zig-zag across wing</option></select></label>}
               <label className={styles.field}><span>Solar-panel facing axis</span><select value={selectedSubsystem.functionalAxis ?? draft.frames.solarCellNormalAxis} onChange={(event) => updateSubsystem((part) => { part.functionalAxis = event.target.value as BodyAxis; })}>{BODY_AXES.map((axis) => <option key={axis}>{axis}</option>)}</select></label>
-              <p>Deployment defines the deployed wing direction. Panel facing defines the active-cell normal and must be perpendicular to deployment.</p>
+              <p>Deployment defines the wing direction. Adjacent panels unfold as a hinged zig-zag chain; panel facing defines the active-cell normal and must remain perpendicular to deployment.</p>
             </div>}
             <div className={styles.fieldGrid3}>
               <NumericField label="Face U" value={selectedSubsystem.faceOffsetM?.u ?? 0} step={0.01} unit="m" onChange={(value) => updateSubsystem((part) => { part.faceOffsetM = { ...(part.faceOffsetM ?? { u: 0, v: 0, normal: 0 }), u: value }; })} />
@@ -933,6 +1009,21 @@ function CustomBuildWorkspace({
               {(["x", "y", "z"] as const).map((axis) => <NumericField key={axis} label={`Rotate ${axis.toUpperCase()}`} value={selectedSubsystem.rotationDeg?.[axis] ?? 0} step={5} min={-180} max={180} unit="°" onChange={(value) => updateSubsystem((part) => { part.rotationDeg = { ...(part.rotationDeg ?? { x: 0, y: 0, z: 0 }), [axis]: value }; })} />)}
             </div>
             <label className={styles.field}><span>Component name</span><input value={selectedSubsystem.name} onChange={(event) => updateSubsystem((part) => { part.name = event.target.value; })} /></label>
+            <div className={styles.formSectionTitle}><h3>Component dimensions</h3><span>DIMENSIONS ONLY</span></div>
+            <div className={styles.fieldGrid3}>
+              {(["x", "y", "z"] as const).map((axis) => (
+                <NumericField
+                  key={axis}
+                  label={`${axis.toUpperCase()} dimension`}
+                  value={selectedSubsystem.envelopeM[axis]}
+                  min={0.005}
+                  max={20}
+                  step={0.005}
+                  unit="m"
+                  onChange={(value) => updateSubsystem((part) => { part.envelopeM[axis] = value; })}
+                />
+              ))}
+            </div>
             <button type="button" className={styles.removePartButton} onClick={removeSubsystem}>Detach component</button>
           </section>}
 
@@ -1060,6 +1151,13 @@ export default function SatelliteInventory({
 
   const activeArea = useMemo(() => activeArrayAreaM2(selected), [selected]);
 
+  const setArrayCondition = (nextDeployment: 0 | 1) => {
+    if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+    animationRef.current = null;
+    setIsPlaying(false);
+    setDeployment(nextDeployment);
+  };
+
   const playDeployment = () => {
     if (isPlaying) return;
     setIsPlaying(true);
@@ -1090,7 +1188,7 @@ export default function SatelliteInventory({
     const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "orbit-pwr-eo-satellite-inventory.json";
+    anchor.download = "orbit-pwr-satellite-inventory.json";
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -1204,7 +1302,7 @@ export default function SatelliteInventory({
           <div className={styles.brandMark} aria-hidden="true"><i /></div>
           <div>
             <p>ORBIT·PWR / DEVELOPMENT LAB</p>
-            <h1>EO Satellite Inventory</h1>
+            <h1>Satellite Inventory</h1>
           </div>
         </div>
         <div className={styles.prototypeFlag}>
@@ -1214,7 +1312,7 @@ export default function SatelliteInventory({
       </header>}
 
       <nav className={styles.modeBar} aria-label="Satellite configuration mode">
-        <button type="button" className={inventoryMode === "EO" ? styles.activeMode : ""} onClick={() => setInventoryMode("EO")}><span>01</span> EO Platforms</button>
+        <button type="button" className={inventoryMode === "EO" ? styles.activeMode : ""} onClick={() => setInventoryMode("EO")}><span>01</span> Satellite Inventory</button>
         <button type="button" className={inventoryMode === "CUSTOM" ? styles.activeMode : ""} onClick={openCustomBuilder}><span>02</span> Custom Build <em>PHASE 2A</em></button>
         <p>{inventoryMode === "EO" ? "Select and tune a validated starting platform" : "Assemble a spacecraft from face-mounted functional parts"}</p>
       </nav>
@@ -1222,7 +1320,7 @@ export default function SatelliteInventory({
       {inventoryMode === "EO" ? <section className={styles.workspace}>
         <aside className={styles.inventoryRail}>
           <div className={styles.sectionTitle}>
-            <div><small>DEFAULT LIBRARY</small><h2>EO platforms</h2></div>
+            <div><small>DEFAULT LIBRARY</small><h2>Satellite inventory</h2></div>
             <span>{inventory.length}</span>
           </div>
           <p className={styles.railIntro}>Representative trial concepts for configuring the inventory workflow. They are not flight-accurate mission replicas.</p>
@@ -1264,6 +1362,8 @@ export default function SatelliteInventory({
             </div>
             <div className={styles.viewerTools}>
               <button type="button" className={showAxes ? styles.activeTool : ""} onClick={() => setShowAxes((value) => !value)}>Axes</button>
+              <button type="button" className={deployment <= 0.05 ? styles.activeTool : ""} onClick={() => setArrayCondition(0)}>Stowed</button>
+              <button type="button" className={deployment >= 0.95 ? styles.activeTool : ""} onClick={() => setArrayCondition(1)}>Deployed</button>
               <button type="button" onClick={() => viewerRef.current?.resetView()}>Fit / reset</button>
             </div>
           </div>
@@ -1297,7 +1397,7 @@ export default function SatelliteInventory({
             <button type="button" onClick={playDeployment} disabled={isPlaying}>{isPlaying ? "Deploying…" : "Replay deployment"}</button>
             <label>
               <span>ARRAY DEPLOYMENT</span>
-              <input type="range" min="0" max="1" step="0.01" value={deployment} onChange={(event) => setDeployment(Number(event.target.value))} />
+              <input type="range" min="0" max="1" step="0.01" value={deployment} onChange={(event) => { if (animationRef.current !== null) cancelAnimationFrame(animationRef.current); animationRef.current = null; setIsPlaying(false); setDeployment(Number(event.target.value)); }} />
             </label>
             <output>{Math.round(deployment * selected.array.deployedAngleDeg)}° / {selected.array.deployedAngleDeg}°</output>
           </div>
@@ -1305,7 +1405,7 @@ export default function SatelliteInventory({
             <article><small>BUS ENVELOPE</small><strong>{selected.geometry.dimensionsM.x} × {selected.geometry.dimensionsM.y} × {selected.geometry.dimensionsM.z} m</strong></article>
             <article><small>ARRAY ACTIVE AREA</small><strong>{activeArea.toFixed(2)} m²</strong></article>
             <article><small>STRING CONFIGURATION</small><strong>{arrayConfigurationLabel(selected)}</strong></article>
-            <article><small>SOLAR POWER MODEL</small><strong>{selected.powerDefaults.fluenceE14Cm2 ?? 5}e14 cm⁻² · {((selected.powerDefaults.mpptEfficiency ?? 1) * 100).toFixed(1)}% MPPT</strong></article>
+            <article><small>SOLAR POWER MODEL</small><strong>{selected.powerDefaults.fluenceE14Cm2 ?? 5}e14 cm⁻² · {(selected.powerDefaults.energyConversionMode ?? "MPPT") === "DET" ? `${selected.powerDefaults.nominalBusVoltageV ?? 28} V DET` : `${((selected.powerDefaults.mpptEfficiency ?? 1) * 100).toFixed(1)}% MPPT`}</strong></article>
           </div>
         </section>
 

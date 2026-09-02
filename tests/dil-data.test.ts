@@ -9,9 +9,10 @@ import {
   dilOperationLoadKey,
   DIL_REQUIRED_FIELDS,
   DIL_TEMPLATE_FIELDS,
+  extrapolateDilData,
   parseDilData,
 } from "../app/lib/dil-data";
-import { arrayPowerCorrectionFactors, type MissionConfig, type PowerConfig } from "../app/lib/orbit-model";
+import { arrayPowerCorrectionFactors, summarizeDailyEnergy, type MissionConfig, type PowerConfig } from "../app/lib/orbit-model";
 
 const mission: MissionConfig = {
   preset: "LEO",
@@ -92,6 +93,44 @@ test("parses required DIL CSV fields and rebases numeric time", () => {
   assert.equal(parsed.records[1].longitudeDeg, 30.25);
   assert.equal(parsed.records[1].spacecraftOperation, "PAYLOAD");
   assert.equal(parsed.records[1].solarPowerGeneratedW, 50);
+});
+
+test("extrapolates DIL replay to an exact mission duration without changing the source", () => {
+  const parsed = parseDilData(csv, "actual.csv");
+  const expanded = extrapolateDilData(parsed, 300);
+  assert.equal(parsed.records.length, 2);
+  assert.equal(expanded.records.at(-1)?.timeSec, 300);
+  assert.equal(expanded.energySeries.timeSec.length, expanded.records.length);
+  assert.ok(expanded.records.length > parsed.records.length);
+  assert.deepEqual(expanded.energySeries.operations, ["NOMINAL", "PAYLOAD"]);
+  assert.match(expanded.warnings.at(-1) ?? "", /mission-duration energy and SOC analysis/i);
+});
+
+test("multi-day DIL replay carries battery SOC and accumulates a repeated energy deficit", () => {
+  const parsed = parseDilData(csv, "actual.csv");
+  const expanded = extrapolateDilData(parsed, 2 * 86400);
+  const loads = {
+    [dilOperationLoadKey("NOMINAL", "SUNLIT")]: 300,
+    [dilOperationLoadKey("PAYLOAD", "ECLIPSE")]: 300,
+  };
+  const points = buildDilSimulation(
+    expanded.records,
+    mission,
+    power,
+    expanded.epochMs,
+    expanded.powerSemantics,
+    expanded.referencePanelAxis,
+    mission.nadirBodyAxis,
+    loads,
+    true,
+  );
+  const daily = summarizeDailyEnergy(points, power.batteryWh);
+  assert.equal(daily.length, 2);
+  assert.ok(daily[0].netEnergyWh < 0 && daily[1].netEnergyWh < 0);
+  assert.ok(Math.abs(daily[1].startSocPct - daily[0].endSocPct) < 1e-9);
+  assert.ok(daily[1].endSocPct <= daily[1].startSocPct);
+  assert.ok(Math.abs(daily[1].cumulativeNetEnergyWh - (daily[0].netEnergyWh + daily[1].netEnergyWh)) < 1e-6);
+  assert.ok(Math.abs(daily[1].effectiveGenerationWh - daily[0].effectiveGenerationWh) < 1e-3);
 });
 
 test("accepts a JSON records envelope and case-insensitive field names", () => {
@@ -299,6 +338,35 @@ test("builds attitude-constrained replay power and preserves measured telemetry"
   assert.ok(points[1].socPct < points[0].socPct);
   assert.equal(points[1].operationLoadW, 300);
   assert.equal(points[1].netPowerW, -250);
+});
+
+test("hypothetical string failures derate direct-watt DIL generation", () => {
+  const parsed = parseDilData(csv, "actual.csv");
+  const faultedPower: PowerConfig = {
+    ...power,
+    arrayFaultMode: "STRING_FAILURE",
+    failedParallelStrings: 1,
+  };
+  const replay = buildDilSimulation(
+    parsed.records,
+    mission,
+    faultedPower,
+    parsed.epochMs,
+    parsed.powerSemantics,
+    parsed.referencePanelAxis,
+  );
+  assert.equal(replay[0].measuredPowerW, 100);
+  assert.equal(replay[1].measuredPowerW, 25);
+
+  const analysis = analyzeDilEnergy(
+    parsed.energySeries,
+    mission,
+    faultedPower,
+    parsed.epochMs,
+    parsed.powerSemantics,
+    parsed.referencePanelAxis,
+  );
+  assert.ok(Math.abs(analysis.measuredEnergyWh - 1.0416666667) < 1e-6);
 });
 
 test("resolves numeric payload Earth and Sun angles into the rendered payload boresight", () => {

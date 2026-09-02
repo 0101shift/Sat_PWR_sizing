@@ -291,6 +291,33 @@
 
 .builderViewerFrame { min-height: 280px; }
 
+.dimensionReadout {
+  position: absolute;
+  z-index: 3;
+  top: 15px;
+  left: 15px;
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid rgba(58, 88, 97, .55);
+  background: rgba(5, 13, 17, .75);
+  pointer-events: none;
+}
+
+.dimensionReadout span {
+  color: var(--inv-teal);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 7px;
+  letter-spacing: .12em;
+}
+
+.dimensionReadout b {
+  color: #b7cbce;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 520;
+}
+
 .builderBadge {
   position: absolute;
   z-index: 3;
@@ -777,6 +804,7 @@
 .axisPayload { background: #ff8a34; }
 .axisSun { background: #ffd43b; }
 .axisDeploy { background: #ff4fd8; }
+.axisFold { background: #f0c45a; }
 .contextVelocity { background: #00e5ff; }
 .contextNadir { background: #b15cff; }
 .contextSun { background: #fff0a8; }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   arrayPowerCorrectionFactors,
+  arrayPowerSample,
   eclipseFactor,
   formationObserverBasis,
   formatDuration,
@@ -10,8 +11,10 @@ import {
   orbitalPeriodSec,
   orbitFrameSample,
   bodyAxisDirectionInInertial,
+  parallelStringAvailability,
   runSimulation,
   shortestQuaternionTarget,
+  summarizeDailyEnergy,
   solarIrradianceScale,
   sunDirection,
   type MissionConfig,
@@ -203,7 +206,7 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
   assert.equal(result.metrics.temperatureRetentionPct, 100);
   assert.equal(result.metrics.electricalRetentionPct, 88);
   assert.equal(result.metrics.opticalRetentionPct, 100);
-  assert.equal(runSimulation({ ...mission, durationDays: 1 }, power).metrics.durationSec, 2 * 86400);
+  assert.equal(runSimulation({ ...mission, durationDays: 1 }, power).metrics.durationSec, 86400);
   assert.ok(result.points.every((point) => point.shadowFactor >= 0 && point.shadowFactor <= 1));
   const rearFacing = result.points.filter((point) => point.incidenceDeg > 90);
   assert.ok(rearFacing.length > 0);
@@ -263,4 +266,135 @@ test("simulation produces bounded power, battery, and a complete axis ranking", 
   assert.ok(Math.abs(initial.panelNormalBody[0]) < 1e-9 && Math.abs(initial.panelNormalBody[1] - 1) < 1e-9);
   assert.ok(Math.abs(initial.hingeBody[0] + 1) < 1e-9 && Math.abs(initial.hingeBody[1]) < 1e-9);
   assert.ok(remapped.points.every((point) => point.panelNormalBody.every((component, index) => Math.abs(component - initial.panelNormalBody[index]) < 1e-9)));
+
+  const resized = runSimulation(mission, {
+    ...power,
+    scenarioSeriesCells: 40,
+    scenarioParallelStrings: 12,
+  });
+  assert.equal(resized.metrics.arrayVmpV, 2.247 * 40);
+  assert.equal(resized.metrics.arrayImpA, 1.255 * 12);
+  assert.equal(resized.metrics.cellCount, 40 * 12);
+  assert.ok(Math.abs(resized.metrics.arrayConfigurationPct - 93.75) < 1e-12);
+
+  const daily = summarizeDailyEnergy(result.points, power.batteryWh);
+  assert.equal(daily.length, 2);
+  assert.ok(daily.every((day) => day.rawPanelEnergyWh >= day.effectiveGenerationWh));
+  assert.ok(daily.every((day) => Math.abs(day.consumptionWh - power.averageLoadW * 24) < 1e-6));
+  assert.ok(daily.some((day) => day.shuntedEnergyWh > 0), "full battery surplus should be shunted");
+  assert.ok(Math.abs(daily[1].startSocPct - daily[0].endSocPct) < 1e-9, "SOC must carry across day boundaries");
+  assert.ok(Math.abs(daily[1].cumulativeNetEnergyWh - (daily[0].netEnergyWh + daily[1].netEnergyWh)) < 1e-9);
+});
+
+test("DET uses battery-bus voltage and ignores MPPT efficiency", () => {
+  const base: PowerConfig = {
+    cellModel: "CUSTOM", vmpV: 2.4, impA: 0.5, vscV: 2.7, iscA: 0.55,
+    eolVmpV: 2.2, eolImpA: 0.48, eolVocV: 2.5, eolIscA: 0.52,
+    cellAreaCm2: 30, seriesCells: 20, parallelStrings: 4, packagingEfficiencyPct: 90,
+    fluenceE14Cm2: 5, referenceIrradianceWm2: 1367, referenceTemperatureC: 28,
+    operatingTemperatureC: 28, powerTempCoefficientPctC: -0.08, pointingErrorDeg: 0,
+    angularResponseExponent: 1, energyConversionMode: "DET", nominalBusVoltageV: 28,
+    mpptEfficiencyPct: 10, harnessEfficiencyPct: 100, mismatchLossPct: 0, diodeLossPct: 0,
+    contaminationLossPct: 0, selfShadowLossPct: 0, systemLossPct: 0,
+    averageLoadW: 100, batteryWh: 1000, initialSocPct: 100,
+  };
+  const date = new Date("2026-08-18T00:00:00Z");
+  const detLowMppt = arrayPowerSample(base, date, 0, 1);
+  const detHighMppt = arrayPowerSample({ ...base, mpptEfficiencyPct: 99 }, date, 0, 1);
+  const mppt = arrayPowerSample({ ...base, energyConversionMode: "MPPT", mpptEfficiencyPct: 95 }, date, 0, 1);
+  assert.equal(detLowMppt.effectiveBusPowerW, detHighMppt.effectiveBusPowerW);
+  assert.ok(detLowMppt.effectiveBusPowerW < detLowMppt.rawPanelPowerW);
+  assert.ok(mppt.effectiveBusPowerW > detLowMppt.effectiveBusPowerW);
+});
+
+test("array scenarios resize series voltage and parallel current before applying failures", () => {
+  const base: PowerConfig = {
+    cellModel: "CUSTOM", vmpV: 2.4, impA: 0.5, vscV: 2.7, iscA: 0.55,
+    eolVmpV: 2.2, eolImpA: 0.48, eolVocV: 2.5, eolIscA: 0.52,
+    cellAreaCm2: 30, seriesCells: 20, parallelStrings: 4, packagingEfficiencyPct: 90,
+    fluenceE14Cm2: 5, referenceIrradianceWm2: 1367, referenceTemperatureC: 28,
+    operatingTemperatureC: 28, powerTempCoefficientPctC: -0.08, pointingErrorDeg: 0,
+    angularResponseExponent: 1, energyConversionMode: "MPPT", nominalBusVoltageV: 28,
+    mpptEfficiencyPct: 95, harnessEfficiencyPct: 100, mismatchLossPct: 0, diodeLossPct: 0,
+    contaminationLossPct: 0, selfShadowLossPct: 0, systemLossPct: 0,
+    averageLoadW: 100, batteryWh: 1000, initialSocPct: 100,
+  };
+  const date = new Date("2026-08-18T00:00:00Z");
+  const failed = { ...base, arrayFaultMode: "STRING_FAILURE" as const, failedParallelStrings: 1 };
+  const availability = parallelStringAvailability(failed);
+  assert.deepEqual(availability, {
+    nominalSeriesCells: 20,
+    scenarioSeriesCells: 20,
+    nominalStrings: 4,
+    scenarioStrings: 4,
+    failedStrings: 1,
+    activeStrings: 3,
+    retention: 0.75,
+    powerRetention: 0.75,
+  });
+
+  const nominalMppt = arrayPowerSample(base, date, 0, 1);
+  const failedMppt = arrayPowerSample(failed, date, 0, 1);
+  assert.ok(Math.abs(failedMppt.rawPanelPowerW / nominalMppt.rawPanelPowerW - 0.75) < 1e-12);
+  assert.ok(Math.abs(failedMppt.effectiveBusPowerW / nominalMppt.effectiveBusPowerW - 0.75) < 1e-12);
+
+  const nominalDet = arrayPowerSample({ ...base, energyConversionMode: "DET" }, date, 0, 1);
+  const failedDet = arrayPowerSample({ ...failed, energyConversionMode: "DET" }, date, 0, 1);
+  assert.ok(Math.abs((failedDet.detOperatingCurrentA ?? 0) / (nominalDet.detOperatingCurrentA ?? 1) - 0.75) < 1e-12);
+  assert.ok(Math.abs(failedDet.effectiveBusPowerW / nominalDet.effectiveBusPowerW - 0.75) < 1e-12);
+
+  assert.deepEqual(parallelStringAvailability({ ...failed, failedParallelStrings: 99 }), {
+    nominalSeriesCells: 20,
+    scenarioSeriesCells: 20,
+    nominalStrings: 4,
+    scenarioStrings: 4,
+    failedStrings: 4,
+    activeStrings: 0,
+    retention: 0,
+    powerRetention: 0,
+  });
+
+  const expanded = {
+    ...base,
+    scenarioParallelStrings: 6,
+    arrayFaultMode: "NOMINAL" as const,
+    failedParallelStrings: 1,
+  };
+  assert.deepEqual(parallelStringAvailability(expanded), {
+    nominalSeriesCells: 20,
+    scenarioSeriesCells: 20,
+    nominalStrings: 4,
+    scenarioStrings: 6,
+    failedStrings: 0,
+    activeStrings: 6,
+    retention: 1.5,
+    powerRetention: 1.5,
+  });
+  const expandedSample = arrayPowerSample(expanded, date, 0, 1);
+  assert.ok(Math.abs(expandedSample.effectiveBusPowerW / nominalMppt.effectiveBusPowerW - 1.5) < 1e-12);
+
+  const lockedFailure = parallelStringAvailability({
+    ...base,
+    scenarioSeriesCells: 30,
+    scenarioParallelStrings: 6,
+    arrayFaultMode: "STRING_FAILURE",
+    failedParallelStrings: 1,
+  });
+  assert.deepEqual(lockedFailure, {
+    nominalSeriesCells: 20,
+    scenarioSeriesCells: 20,
+    nominalStrings: 4,
+    scenarioStrings: 4,
+    failedStrings: 1,
+    activeStrings: 3,
+    retention: 0.75,
+    powerRetention: 0.75,
+  });
+
+  const longerSeries = { ...base, scenarioSeriesCells: 30 };
+  const longerSeriesAvailability = parallelStringAvailability(longerSeries);
+  assert.equal(longerSeriesAvailability.scenarioSeriesCells, 30);
+  assert.equal(longerSeriesAvailability.powerRetention, 1.5);
+  const longerSeriesSample = arrayPowerSample(longerSeries, date, 0, 1);
+  assert.ok(Math.abs(longerSeriesSample.effectiveBusPowerW / nominalMppt.effectiveBusPowerW - 1.5) < 1e-12);
 });

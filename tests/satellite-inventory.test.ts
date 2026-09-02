@@ -10,8 +10,8 @@ import {
   mergeSatelliteInventory,
   readSatelliteInventoryPayload,
 } from "../app/lib/satellite-inventory";
-import { mountedPartCenter } from "../app/lib/satellite-parts";
-import { operationBeamSourceBody } from "../app/lib/satellite-three";
+import { createCustomSatelliteDraft, mountedPartCenter } from "../app/lib/satellite-parts";
+import { buildInventorySatelliteModel, disposeThreeTree, operationBeamSourceBody } from "../app/lib/satellite-three";
 
 test("trial inventory supplies three distinct EO platform classes", () => {
   assert.equal(DEFAULT_EO_SATELLITES.length, 3);
@@ -92,6 +92,47 @@ test("inventory import counts invalid records while accepting valid ones", () =>
   const result = readSatelliteInventoryPayload({ satellites: [valid, { id: "broken" }] });
   assert.equal(result.items.length, 1);
   assert.equal(result.rejectedCount, 1);
+});
+
+test("custom arrays preserve a selectable fold direction", () => {
+  const draft = createCustomSatelliteDraft();
+  assert.equal(draft.array.foldDirection, "lateral");
+  draft.array.foldDirection = "longitudinal";
+  const result = readSatelliteInventoryPayload({ satellites: [draft] });
+  assert.equal(result.rejectedCount, 0);
+  assert.equal(result.items[0].array.foldDirection, "longitudinal");
+
+  const invalid = structuredClone(draft) as unknown as { array: { foldDirection: string } };
+  invalid.array.foldDirection = "diagonal";
+  assert.equal(isSatelliteInventoryItem(invalid), false);
+});
+
+test("lateral deployment uses a nested zig-zag hinge chain instead of sliding panels", () => {
+  const draft = createCustomSatelliteDraft();
+  draft.array.wingLayout = "dual";
+  draft.array.panelsPerWing = 3;
+  draft.array.foldDirection = "lateral";
+  const stowedModel = buildInventorySatelliteModel(draft, 0, false);
+  const deployedModel = buildInventorySatelliteModel(draft, 1, false);
+
+  for (const sign of [-1, 1]) {
+    const stowedLinks = [1, 2, 3].map((index) => stowedModel.getObjectByName(`solar-panel-link-${sign}-${index}`));
+    const deployedLinks = [1, 2, 3].map((index) => deployedModel.getObjectByName(`solar-panel-link-${sign}-${index}`));
+    assert.ok(stowedLinks.every(Boolean));
+    assert.ok(deployedLinks.every(Boolean));
+    assert.equal(stowedLinks[1]!.parent, stowedLinks[0]);
+    assert.equal(stowedLinks[2]!.parent, stowedLinks[1]);
+    assert.ok(Math.abs(Math.abs(stowedLinks[1]!.rotation.y) - Math.PI) < 1e-9);
+    assert.ok(Math.abs(Math.abs(stowedLinks[2]!.rotation.y) - Math.PI) < 1e-9);
+    assert.equal(Math.abs(deployedLinks[1]!.rotation.y), 0);
+    assert.equal(Math.abs(deployedLinks[2]!.rotation.y), 0);
+    assert.equal(stowedModel.getObjectByName(`solar-panel-hinge-${sign}-1`)?.parent, stowedLinks[1]);
+    assert.equal(stowedModel.getObjectByName(`solar-panel-hinge-${sign}-2`)?.parent, stowedLinks[2]);
+    assert.deepEqual(stowedLinks.slice(1).map((link) => link!.position.toArray()), deployedLinks.slice(1).map((link) => link!.position.toArray()));
+  }
+
+  disposeThreeTree(stowedModel);
+  disposeThreeTree(deployedModel);
 });
 
 test("operation beams originate from their assigned rigid spacecraft components", () => {

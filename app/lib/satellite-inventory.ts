@@ -4,6 +4,7 @@ export const SATELLITE_INVENTORY_SCHEMA = "orbit-pwr-satellite-inventory/v1";
 export type BodyAxis = (typeof BODY_AXES)[number];
 export type SatelliteClass = "CubeSat" | "Microsatellite" | "Small satellite";
 export type WingLayout = "single" | "dual";
+export type SolarFoldDirection = "lateral" | "longitudinal";
 export const SUBSYSTEM_KINDS = ["payload", "radio", "solar_array", "propulsion", "power", "attitude", "thermal", "structure", "custom"] as const;
 export type SubsystemKind = (typeof SUBSYSTEM_KINDS)[number];
 
@@ -50,6 +51,7 @@ export interface SatelliteInventoryItem {
     panelWidthM: number;
     deploymentAxis: BodyAxis;
     deployedAngleDeg: number;
+    foldDirection?: SolarFoldDirection;
     cellModel: "AZUR 3G30-Advanced 4x8" | "AZUR 4G32-Advanced 4x8";
     seriesCells: number;
     parallelStrings: number;
@@ -63,6 +65,8 @@ export interface SatelliteInventoryItem {
     ltan?: string;
   };
   powerDefaults: {
+    energyConversionMode?: "MPPT" | "DET";
+    nominalBusVoltageV?: number;
     mpptEfficiency: number;
     fluenceE14Cm2?: number;
     referenceIrradianceWm2?: number;
@@ -111,6 +115,7 @@ export const DEFAULT_EO_SATELLITES: SatelliteInventoryItem[] = [
       panelWidthM: 0.23,
       deploymentAxis: "+Y",
       deployedAngleDeg: 90,
+      foldDirection: "lateral",
       cellModel: "AZUR 3G30-Advanced 4x8",
       seriesCells: 19,
       parallelStrings: 4,
@@ -121,6 +126,8 @@ export const DEFAULT_EO_SATELLITES: SatelliteInventoryItem[] = [
       attitudeMode: "Nadir pointing",
     },
     powerDefaults: {
+      energyConversionMode: "MPPT",
+      nominalBusVoltageV: 28,
       mpptEfficiency: 0.94,
       fluenceE14Cm2: 5,
       referenceIrradianceWm2: 1367,
@@ -170,6 +177,7 @@ export const DEFAULT_EO_SATELLITES: SatelliteInventoryItem[] = [
       panelWidthM: 0.86,
       deploymentAxis: "+Y",
       deployedAngleDeg: 90,
+      foldDirection: "lateral",
       cellModel: "AZUR 3G30-Advanced 4x8",
       seriesCells: 19,
       parallelStrings: 24,
@@ -180,6 +188,8 @@ export const DEFAULT_EO_SATELLITES: SatelliteInventoryItem[] = [
       attitudeMode: "Mission profile / DIL",
     },
     powerDefaults: {
+      energyConversionMode: "MPPT",
+      nominalBusVoltageV: 28,
       mpptEfficiency: 0.95,
       fluenceE14Cm2: 5,
       referenceIrradianceWm2: 1367,
@@ -230,6 +240,7 @@ export const DEFAULT_EO_SATELLITES: SatelliteInventoryItem[] = [
       panelWidthM: 1.25,
       deploymentAxis: "+Y",
       deployedAngleDeg: 90,
+      foldDirection: "lateral",
       cellModel: "AZUR 4G32-Advanced 4x8",
       seriesCells: 36,
       parallelStrings: 32,
@@ -240,6 +251,8 @@ export const DEFAULT_EO_SATELLITES: SatelliteInventoryItem[] = [
       attitudeMode: "Mission profile / DIL",
     },
     powerDefaults: {
+      energyConversionMode: "MPPT",
+      nominalBusVoltageV: 50,
       mpptEfficiency: 0.96,
       fluenceE14Cm2: 5,
       referenceIrradianceWm2: 1367,
@@ -294,6 +307,7 @@ export function isSatelliteInventoryItem(value: unknown): value is SatelliteInve
       item.array &&
       (item.array.wingLayout === "single" || item.array.wingLayout === "dual") &&
       isBodyAxis(item.array.deploymentAxis) &&
+      (item.array.foldDirection === undefined || ["lateral", "longitudinal"].includes(item.array.foldDirection)) &&
       Number.isFinite(item.array.panelsPerWing) &&
       Number.isFinite(item.array.panelLengthM) &&
       Number.isFinite(item.array.panelWidthM) &&
@@ -305,6 +319,8 @@ export function isSatelliteInventoryItem(value: unknown): value is SatelliteInve
       ["Nadir pointing", "Sun pointing", "Mission profile / DIL"].includes(item.missionDefaults.attitudeMode ?? "") &&
       item.powerDefaults &&
       Number.isFinite(item.powerDefaults.mpptEfficiency) &&
+      (!item.powerDefaults.energyConversionMode || ["MPPT", "DET"].includes(item.powerDefaults.energyConversionMode)) &&
+      (item.powerDefaults.nominalBusVoltageV === undefined || Number.isFinite(item.powerDefaults.nominalBusVoltageV)) &&
       (!item.subsystems || (
         Array.isArray(item.subsystems) && item.subsystems.every((subsystem) =>
           typeof subsystem.id === "string" &&

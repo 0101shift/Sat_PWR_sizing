@@ -30,6 +30,9 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.doesNotMatch(html, /Archived layout/i);
   assert.match(html, /EO Atlas 600/i);
   assert.match(html, /Deployed spacecraft/i);
+  assert.match(html, /Array fault scenario/i);
+  assert.match(html, /Scenario series cells/i);
+  assert.match(html, /Scenario parallel strings/i);
   assert.doesNotMatch(html, /Edit configuration/i);
   assert.match(html, /Deploy to orbit/i);
   assert.doesNotMatch(html, /Save &amp; deploy to orbit/i);
@@ -80,9 +83,19 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.match(html, /Contamination loss/i);
   assert.match(html, /Self-shadowed area/i);
   assert.match(html, /Other system loss/i);
-  assert.match(html, /Generated energy \/ span/i);
+  assert.match(html, /Effective generation · day 1/i);
+  assert.match(html, /Mission-day energy/i);
+  assert.match(html, /Start SOC/i);
+  assert.match(html, /Cumulative net/i);
+  assert.match(html, /Effective bus available/i);
+  assert.doesNotMatch(html, /power-output-metrics/i);
+  assert.ok(html.indexOf("Generation &amp; battery") < html.indexOf("MISSION-DAY ENERGY"));
+  assert.doesNotMatch(html, />Shunted</i);
+  assert.doesNotMatch(html, />Unserved</i);
   assert.match(html, /Hide power plot/i);
   assert.match(html, /Hide battery SOC plot/i);
+  assert.match(html, /Fit to window/i);
+  assert.match(html, /Wheel zoom/i);
   assert.match(html, /Perigee \/ apogee/i);
   assert.match(html, /Reset view/i);
   assert.doesNotMatch(html, /Sat POV/i);
@@ -101,17 +114,20 @@ test("server-renders the Orbit PWR engineering dashboard", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
-test("server-renders the standalone local EO satellite inventory", async () => {
+test("server-renders the standalone local satellite inventory", async () => {
   const response = await render("/satellite-inventory");
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /EO Satellite Inventory/i);
+  assert.match(html, /Satellite Inventory/i);
+  assert.match(html, /Satellite Inventory/i);
   assert.match(html, /LOCAL PROTOTYPE · NOT CONNECTED TO SIMULATOR/i);
   assert.match(html, /EO Scout 12U/i);
   assert.match(html, /EO Meridian 150/i);
   assert.match(html, /EO Atlas 600/i);
   assert.match(html, /Replay deployment/i);
+  assert.match(html, /Stowed/i);
+  assert.match(html, /Deployed/i);
   assert.match(html, /Panel facing/i);
   assert.match(html, /ASSIGNED VECTORS/i);
   assert.match(html, /VELOCITY/i);

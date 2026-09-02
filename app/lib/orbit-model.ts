@@ -5,6 +5,7 @@ export type Axis = "X" | "Y" | "Z";
 export type SignedAxis = "+X" | "-X" | "+Y" | "-Y" | "+Z" | "-Z";
 export type AttitudeMode = "LVLH" | "SUN_POINTING" | "INERTIAL";
 export type WingLayout = "SINGLE" | "DUAL";
+export type EnergyConversionMode = "MPPT" | "DET";
 export type CellModel =
   | "AZUR_3G30_ADV_4X8"
   | "AZUR_3G30_ADV_HP"
@@ -47,6 +48,10 @@ export interface PowerConfig {
   cellAreaCm2: number;
   seriesCells: number;
   parallelStrings: number;
+  scenarioSeriesCells?: number;
+  scenarioParallelStrings?: number;
+  arrayFaultMode?: "NOMINAL" | "STRING_FAILURE";
+  failedParallelStrings?: number;
   packagingEfficiencyPct: number;
   fluenceE14Cm2: number;
   referenceIrradianceWm2: number;
@@ -55,6 +60,8 @@ export interface PowerConfig {
   powerTempCoefficientPctC: number;
   pointingErrorDeg: number;
   angularResponseExponent: number;
+  energyConversionMode?: EnergyConversionMode;
+  nominalBusVoltageV?: number;
   mpptEfficiencyPct: number;
   harnessEfficiencyPct: number;
   mismatchLossPct: number;
@@ -93,6 +100,12 @@ export interface SimulationPoint {
   betaDeg: number;
   incidenceDeg: number;
   shadowFactor: number;
+  /** Available EOL panel power at the array MPP before power-path conversion losses. */
+  rawPanelPowerW?: number;
+  /** Power deliberately shunted because the battery was already full. */
+  shuntedPowerW?: number;
+  /** Load that could not be supplied after the battery reached empty. */
+  unservedPowerW?: number;
   powerW: number;
   measuredPowerW?: number;
   perfectPointingPowerW?: number;
@@ -118,6 +131,14 @@ export interface SimulationMetrics {
   raanRateDegDay: number;
   elapsedOrbits: number;
   cellCount: number;
+  nominalSeriesCells: number;
+  scenarioSeriesCells: number;
+  nominalParallelStrings: number;
+  scenarioParallelStrings: number;
+  activeParallelStrings: number;
+  failedParallelStrings: number;
+  stringAvailabilityPct: number;
+  arrayConfigurationPct: number;
   activeCellAreaM2: number;
   packagedAreaM2: number;
   arrayVmpV: number;
@@ -187,6 +208,41 @@ export function shortestQuaternionTarget(
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Resolves a mission-level parallel-string trade study without modifying the
+ * saved spacecraft. The scenario may resize the series/parallel topology and
+ * then remove failed parallel strings. Series count controls voltage while
+ * active parallel strings control current.
+ */
+export function parallelStringAvailability(
+  power: Pick<PowerConfig, "seriesCells" | "parallelStrings" | "scenarioSeriesCells" | "scenarioParallelStrings" | "arrayFaultMode" | "failedParallelStrings">,
+) {
+  const nominalSeriesCells = Math.max(1, Math.round(power.seriesCells));
+  const nominalStrings = Math.max(1, Math.round(power.parallelStrings));
+  const failureMode = power.arrayFaultMode === "STRING_FAILURE";
+  const scenarioSeriesCells = failureMode
+    ? nominalSeriesCells
+    : Math.max(1, Math.round(power.scenarioSeriesCells ?? nominalSeriesCells));
+  const scenarioStrings = failureMode
+    ? nominalStrings
+    : Math.max(1, Math.round(power.scenarioParallelStrings ?? nominalStrings));
+  const requestedFailures = failureMode
+    ? Math.max(0, Math.round(power.failedParallelStrings ?? 0))
+    : 0;
+  const failedStrings = clamp(requestedFailures, 0, scenarioStrings);
+  const activeStrings = scenarioStrings - failedStrings;
+  return {
+    nominalSeriesCells,
+    scenarioSeriesCells,
+    nominalStrings,
+    scenarioStrings,
+    failedStrings,
+    activeStrings,
+    retention: activeStrings / nominalStrings,
+    powerRetention: (scenarioSeriesCells * activeStrings) / (nominalSeriesCells * nominalStrings),
+  };
 }
 
 function dot(a: Vector3, b: Vector3) {
@@ -586,12 +642,15 @@ export function arrayPowerCorrectionFactors(
     0,
     1.25,
   );
-  const electricalRetention =
+  const distributionRetention =
     clamp(1 - power.systemLossPct / 100, 0, 1)
-    * clamp(power.mpptEfficiencyPct / 100, 0, 1)
     * clamp(power.harnessEfficiencyPct / 100, 0, 1)
     * clamp(1 - power.mismatchLossPct / 100, 0, 1)
     * clamp(1 - power.diodeLossPct / 100, 0, 1);
+  const conversionRetention = (power.energyConversionMode ?? "MPPT") === "MPPT"
+    ? clamp(power.mpptEfficiencyPct / 100, 0, 1)
+    : 1;
+  const electricalRetention = distributionRetention * conversionRetention;
   const opticalRetention =
     clamp(1 - power.contaminationLossPct / 100, 0, 1)
     * clamp(1 - power.selfShadowLossPct / 100, 0, 1);
@@ -602,6 +661,8 @@ export function arrayPowerCorrectionFactors(
   const irradianceRetention = solarFluxWm2 / SOLAR_CONSTANT_W_M2;
   return {
     temperatureRetention,
+    distributionRetention,
+    conversionRetention,
     electricalRetention,
     opticalRetention,
     incidenceRetention,
@@ -615,6 +676,157 @@ export function arrayPowerCorrectionFactors(
       * irradianceRetention
       * clamp(shadowFactor, 0, 1),
   };
+}
+
+export type ArrayPowerSample = ReturnType<typeof arrayPowerCorrectionFactors> & {
+  rawPanelPowerW: number;
+  effectiveBusPowerW: number;
+  conversionMode: EnergyConversionMode;
+  detOperatingCurrentA?: number;
+};
+
+function detArrayCurrentAtVoltage(power: PowerConfig, busVoltageV: number, lifecycle: "BOL" | "EOL") {
+  const scenario = parallelStringAvailability(power);
+  const seriesCells = scenario.scenarioSeriesCells;
+  const parallelStrings = scenario.activeStrings;
+  const vmp = seriesCells * Math.max(0, lifecycle === "BOL" ? power.vmpV : power.eolVmpV);
+  const voc = Math.max(vmp, seriesCells * Math.max(0, lifecycle === "BOL" ? power.vscV : power.eolVocV));
+  const imp = parallelStrings * Math.max(0, lifecycle === "BOL" ? power.impA : power.eolImpA);
+  const isc = Math.max(imp, parallelStrings * Math.max(0, lifecycle === "BOL" ? power.iscA : power.eolIscA));
+  if (busVoltageV <= 0 || voc <= 0 || busVoltageV >= voc) return 0;
+  if (busVoltageV <= vmp || voc <= vmp) {
+    return isc + (imp - isc) * clamp(busVoltageV / Math.max(vmp, 1e-9), 0, 1);
+  }
+  return imp * clamp((voc - busVoltageV) / Math.max(voc - vmp, 1e-9), 0, 1);
+}
+
+/** Converts EOL panel potential into usable bus power for MPPT or DET. */
+export function arrayPowerSample(
+  power: PowerConfig,
+  date: Date,
+  incidenceDeg: number,
+  shadowFactor: number,
+  lifecycle: "BOL" | "EOL" = "EOL",
+): ArrayPowerSample {
+  const corrections = arrayPowerCorrectionFactors(power, date, incidenceDeg, shadowFactor);
+  const scenario = parallelStringAvailability(power);
+  const cellCount = scenario.scenarioSeriesCells * scenario.activeStrings;
+  const mppPowerW = Math.max(0, lifecycle === "BOL" ? power.vmpV : power.eolVmpV)
+    * Math.max(0, lifecycle === "BOL" ? power.impA : power.eolImpA)
+    * cellCount;
+  const physicalRetention = corrections.temperatureRetention
+    * corrections.opticalRetention
+    * corrections.incidenceRetention
+    * corrections.irradianceRetention
+    * clamp(shadowFactor, 0, 1);
+  const rawPanelPowerW = mppPowerW * physicalRetention;
+  const conversionMode = power.energyConversionMode ?? "MPPT";
+  if (conversionMode === "DET") {
+    const busVoltageV = Math.max(0, power.nominalBusVoltageV ?? 0);
+    const detOperatingCurrentA = detArrayCurrentAtVoltage(power, busVoltageV, lifecycle);
+    const detReferencePowerW = busVoltageV * detOperatingCurrentA;
+    return {
+      ...corrections,
+      rawPanelPowerW,
+      effectiveBusPowerW: Math.min(rawPanelPowerW, detReferencePowerW * physicalRetention)
+        * corrections.distributionRetention,
+      conversionMode,
+      detOperatingCurrentA,
+    };
+  }
+  return {
+    ...corrections,
+    rawPanelPowerW,
+    effectiveBusPowerW: rawPanelPowerW * corrections.electricalRetention,
+    conversionMode,
+  };
+}
+
+export type DailyEnergySummary = {
+  day: number;
+  durationSec: number;
+  rawPanelEnergyWh: number;
+  effectiveGenerationWh: number;
+  consumptionWh: number;
+  netEnergyWh: number;
+  cumulativeNetEnergyWh: number;
+  shuntedEnergyWh: number;
+  unservedEnergyWh: number;
+  startSocPct: number;
+  minSocPct: number;
+  endSocPct: number;
+};
+
+/** Integrates the plotted time series into mission-day energy balances. */
+export function summarizeDailyEnergy(points: SimulationPoint[], batteryWh: number): DailyEnergySummary[] {
+  if (points.length < 2) return [];
+  const capacityWh = Math.max(0.1, batteryWh);
+  const summaries = new Map<number, DailyEnergySummary>();
+  const valueAt = (point: SimulationPoint, key: "raw" | "effective" | "load") => {
+    if (key === "raw") return point.rawPanelPowerW ?? point.measuredPowerW ?? point.powerW;
+    if (key === "effective") return point.measuredPowerW ?? point.powerW;
+    return point.operationLoadW ?? 0;
+  };
+  for (let index = 1; index < points.length; index += 1) {
+    const left = points[index - 1];
+    const right = points[index];
+    if (!(right.tSec > left.tSec)) continue;
+    let segmentStart = left.tSec;
+    while (segmentStart < right.tSec - 1e-9) {
+      const day = Math.floor(segmentStart / 86400) + 1;
+      const segmentEnd = Math.min(right.tSec, day * 86400);
+      const startFraction = (segmentStart - left.tSec) / (right.tSec - left.tSec);
+      const endFraction = (segmentEnd - left.tSec) / (right.tSec - left.tSec);
+      const lerp = (a: number, b: number, fraction: number) => a + (b - a) * fraction;
+      const dtHours = (segmentEnd - segmentStart) / 3600;
+      const integrate = (key: "raw" | "effective" | "load") => {
+        const a = lerp(valueAt(left, key), valueAt(right, key), startFraction);
+        const b = lerp(valueAt(left, key), valueAt(right, key), endFraction);
+        return (a + b) * 0.5 * dtHours;
+      };
+      const startSocPct = lerp(left.socPct, right.socPct, startFraction);
+      const endSocPct = lerp(left.socPct, right.socPct, endFraction);
+      const rawPanelEnergyWh = integrate("raw");
+      const effectiveGenerationWh = integrate("effective");
+      const consumptionWh = integrate("load");
+      const netEnergyWh = effectiveGenerationWh - consumptionWh;
+      const batteryDeltaWh = (endSocPct - startSocPct) / 100 * capacityWh;
+      const shuntedEnergyWh = Math.max(0, netEnergyWh - Math.max(0, batteryDeltaWh));
+      const unservedEnergyWh = Math.max(0, -netEnergyWh - Math.max(0, -batteryDeltaWh));
+      const current = summaries.get(day) ?? {
+        day,
+        durationSec: 0,
+        rawPanelEnergyWh: 0,
+        effectiveGenerationWh: 0,
+        consumptionWh: 0,
+        netEnergyWh: 0,
+        cumulativeNetEnergyWh: 0,
+        shuntedEnergyWh: 0,
+        unservedEnergyWh: 0,
+        startSocPct,
+        minSocPct: startSocPct,
+        endSocPct,
+      };
+      current.durationSec += segmentEnd - segmentStart;
+      current.rawPanelEnergyWh += rawPanelEnergyWh;
+      current.effectiveGenerationWh += effectiveGenerationWh;
+      current.consumptionWh += consumptionWh;
+      current.netEnergyWh += netEnergyWh;
+      current.shuntedEnergyWh += shuntedEnergyWh;
+      current.unservedEnergyWh += unservedEnergyWh;
+      current.minSocPct = Math.min(current.minSocPct, startSocPct, endSocPct);
+      current.endSocPct = endSocPct;
+      summaries.set(day, current);
+      segmentStart = segmentEnd;
+    }
+  }
+  let cumulativeNetEnergyWh = 0;
+  return [...summaries.values()]
+    .sort((a, b) => a.day - b.day)
+    .map((summary) => {
+      cumulativeNetEnergyWh += summary.netEnergyWh;
+      return { ...summary, cumulativeNetEnergyWh };
+    });
 }
 
 function simulateAxis(
@@ -648,7 +860,7 @@ function simulateAxis(
   const argumentOfPerigee0 = (mission.preset === "GEO" ? 0 : mission.argumentOfPerigeeDeg) * DEG;
   const initialTrueAnomaly = mission.trueAnomalyDeg * DEG;
   const initialMeanAnomaly = meanAnomalyFromTrueAnomaly(initialTrueAnomaly, eccentricity);
-  const durationSec = clamp(mission.durationDays, 2, 30) * 86400;
+  const durationSec = clamp(mission.durationDays, 1, 30) * 86400;
   const desiredStep = clamp(mission.stepSec, 10, 600);
   const sampleCount = Math.min(2400, Math.max(96, Math.ceil(durationSec / desiredStep)));
   const dt = durationSec / sampleCount;
@@ -663,25 +875,36 @@ function simulateAxis(
   let betaMaxDeg = -90;
   let solarFluxMinWm2 = Number.POSITIVE_INFINITY;
   let solarFluxMaxWm2 = 0;
-  const seriesCells = Math.max(1, Math.round(power.seriesCells));
-  const parallelStrings = Math.max(1, Math.round(power.parallelStrings));
-  const cellCount = seriesCells * parallelStrings;
+  const nominalSeriesCells = Math.max(1, Math.round(power.seriesCells));
+  const stringAvailability = parallelStringAvailability(power);
+  const scenarioSeriesCells = stringAvailability.scenarioSeriesCells;
+  const parallelStrings = stringAvailability.nominalStrings;
+  const scenarioParallelStrings = stringAvailability.scenarioStrings;
+  const activeParallelStrings = stringAvailability.activeStrings;
+  const cellCount = scenarioSeriesCells * scenarioParallelStrings;
+  const activeElectricalCellCount = scenarioSeriesCells * activeParallelStrings;
   const activeCellAreaM2 = cellCount * Math.max(0.01, power.cellAreaCm2) / 10000;
   const packagingFactor = clamp(power.packagingEfficiencyPct / 100, 0.1, 1);
   const packagedAreaM2 = activeCellAreaM2 / packagingFactor;
-  const bolArrayPowerW =
+  const scenarioBolArrayPowerW =
     Math.max(0, power.vmpV) * Math.max(0, power.impA) * cellCount;
-  const eolArrayPowerW =
+  const scenarioEolArrayPowerW =
     Math.max(0, power.eolVmpV) * Math.max(0, power.eolImpA) * cellCount;
-  const radiationRetention = bolArrayPowerW > 0
-    ? clamp(eolArrayPowerW / bolArrayPowerW, 0, 1.2)
+  const bolArrayPowerW =
+    Math.max(0, power.vmpV) * Math.max(0, power.impA) * activeElectricalCellCount;
+  const eolArrayPowerW =
+    Math.max(0, power.eolVmpV) * Math.max(0, power.eolImpA) * activeElectricalCellCount;
+  const radiationRetention = scenarioBolArrayPowerW > 0
+    ? clamp(scenarioEolArrayPowerW / scenarioBolArrayPowerW, 0, 1.2)
     : 0;
   const referenceCorrections = arrayPowerCorrectionFactors(power, safeEpoch, 0, 1);
-  const bolNetArrayPowerW = bolArrayPowerW * referenceCorrections.totalRetention;
-  const eolNetArrayPowerW = eolArrayPowerW * referenceCorrections.totalRetention;
+  const referenceBolPower = arrayPowerSample(power, safeEpoch, 0, 1, "BOL");
+  const referenceEolPower = arrayPowerSample(power, safeEpoch, 0, 1);
+  const bolNetArrayPowerW = referenceBolPower.effectiveBusPowerW;
+  const eolNetArrayPowerW = referenceEolPower.effectiveBusPowerW;
   const impliedCellEfficiencyPct =
     activeCellAreaM2 > 0
-      ? (bolArrayPowerW / (Math.max(1, power.referenceIrradianceWm2) * activeCellAreaM2)) * 100
+      ? (scenarioBolArrayPowerW / (Math.max(1, power.referenceIrradianceWm2) * activeCellAreaM2)) * 100
       : 0;
 
   for (let sample = 0; sample <= sampleCount; sample += 1) {
@@ -714,8 +937,9 @@ function simulateAxis(
     const incidenceDeg = Math.acos(incidenceDot) * RAD;
     const shadowFactor = eclipseFactor(position, sun);
     const sampleDate = new Date(safeEpoch.getTime() + tSec * 1000);
-    const corrections = arrayPowerCorrectionFactors(power, sampleDate, incidenceDeg, shadowFactor);
-    const generatedPowerW = eolArrayPowerW * corrections.totalRetention;
+    const powerSample = arrayPowerSample(power, sampleDate, incidenceDeg, shadowFactor);
+    const corrections = powerSample;
+    const generatedPowerW = powerSample.effectiveBusPowerW;
     solarFluxMinWm2 = Math.min(solarFluxMinWm2, corrections.solarFluxWm2);
     solarFluxMaxWm2 = Math.max(solarFluxMaxWm2, corrections.solarFluxWm2);
 
@@ -757,7 +981,10 @@ function simulateAxis(
       betaDeg,
       incidenceDeg,
       shadowFactor,
+      rawPanelPowerW: powerSample.rawPanelPowerW,
       powerW: generatedPowerW,
+      operationLoadW: Math.max(0, power.averageLoadW),
+      netPowerW: generatedPowerW - Math.max(0, power.averageLoadW),
       socPct,
     });
   }
@@ -785,18 +1012,26 @@ function simulateAxis(
       raanRateDegDay: raanRate * RAD * 86400,
       elapsedOrbits,
       cellCount,
+      nominalSeriesCells,
+      scenarioSeriesCells,
+      nominalParallelStrings: parallelStrings,
+      scenarioParallelStrings,
+      activeParallelStrings,
+      failedParallelStrings: stringAvailability.failedStrings,
+      stringAvailabilityPct: stringAvailability.retention * 100,
+      arrayConfigurationPct: stringAvailability.powerRetention * 100,
       activeCellAreaM2,
       packagedAreaM2,
-      arrayVmpV: seriesCells * Math.max(0, power.eolVmpV),
-      arrayImpA: parallelStrings * Math.max(0, power.eolImpA),
-      arrayVscV: seriesCells * Math.max(0, power.eolVocV),
-      arrayIscA: parallelStrings * Math.max(0, power.eolIscA),
+      arrayVmpV: scenarioSeriesCells * Math.max(0, power.eolVmpV),
+      arrayImpA: activeParallelStrings * Math.max(0, power.eolImpA),
+      arrayVscV: scenarioSeriesCells * Math.max(0, power.eolVocV),
+      arrayIscA: activeParallelStrings * Math.max(0, power.eolIscA),
       bolArrayPowerW,
       eolArrayPowerW,
       bolNetArrayPowerW,
       eolNetArrayPowerW,
-      bolArrayVmpV: seriesCells * Math.max(0, power.vmpV),
-      bolArrayImpA: parallelStrings * Math.max(0, power.impA),
+      bolArrayVmpV: scenarioSeriesCells * Math.max(0, power.vmpV),
+      bolArrayImpA: activeParallelStrings * Math.max(0, power.impA),
       impliedCellEfficiencyPct,
       radiationRetentionPct: radiationRetention * 100,
       temperatureRetentionPct: referenceCorrections.temperatureRetention * 100,

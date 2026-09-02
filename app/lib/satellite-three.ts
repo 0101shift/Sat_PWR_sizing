@@ -205,9 +205,16 @@ export function buildInventorySatelliteModel(
     }
   }
   const wingCount = item.array.wingLayout === "dual" ? 2 : 1;
-  const panelGap = item.array.panelLengthM * 0.018;
-  const segmentLength =
-    (item.array.panelLengthM - panelGap * (item.array.panelsPerWing - 1)) / item.array.panelsPerWing;
+  const panelCount = Math.max(1, Math.round(item.array.panelsPerWing));
+  const foldDirection = panelCount > 2 ? item.array.foldDirection ?? "lateral" : "lateral";
+  const panelGap = (foldDirection === "lateral" ? item.array.panelLengthM : item.array.panelWidthM) * 0.018;
+  const segmentLength = foldDirection === "lateral"
+    ? (item.array.panelLengthM - panelGap * (panelCount - 1)) / panelCount
+    : item.array.panelLengthM;
+  const segmentWidth = foldDirection === "longitudinal"
+    ? (item.array.panelWidthM - panelGap * (panelCount - 1)) / panelCount
+    : item.array.panelWidthM;
+  const panelThickness = Math.max(longestBusSide * 0.018, 0.012);
   const panelMaterial = new THREE.MeshStandardMaterial({
     color: 0x153f68,
     emissive: 0x061526,
@@ -222,23 +229,56 @@ export function buildInventorySatelliteModel(
     pivot.name = `solar-wing-pivot-${sign}`;
     pivot.position.x = wingCount === 2 ? sign * (deploymentBusHalfExtent + 0.015) : 0;
     pivot.rotation.y = sign * (1 - deployment) * THREE.MathUtils.degToRad(item.array.deployedAngleDeg);
-    for (let panelIndex = 0; panelIndex < item.array.panelsPerWing; panelIndex += 1) {
+    let previousLink: THREE.Group = pivot;
+    for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+      const link = new THREE.Group();
+      link.name = `solar-panel-link-${sign}-${panelIndex + 1}`;
       const panel = new THREE.Mesh(
-        new THREE.BoxGeometry(segmentLength, item.array.panelWidthM, Math.max(longestBusSide * 0.018, 0.012)),
+        new THREE.BoxGeometry(segmentLength, segmentWidth, panelThickness),
         panelMaterial,
       );
-      panel.position.x = sign * (segmentLength / 2 + panelIndex * (segmentLength + panelGap));
+      panel.name = `solar-panel-${sign}-${panelIndex + 1}`;
+      if (foldDirection === "lateral") {
+        if (panelIndex > 0) {
+          link.position.x = sign * (segmentLength + panelGap);
+          link.rotation.y = (panelIndex % 2 === 1 ? -sign : sign) * (1 - deployment) * Math.PI;
+        }
+        panel.position.x = sign * segmentLength / 2;
+      } else {
+        link.position.y = panelIndex === 0 ? -item.array.panelWidthM / 2 : segmentWidth + panelGap;
+        if (panelIndex > 0) {
+          link.rotation.x = (panelIndex % 2 === 1 ? sign : -sign) * (1 - deployment) * Math.PI;
+        }
+        panel.position.x = sign * item.array.panelLengthM / 2;
+        panel.position.y = segmentWidth / 2;
+      }
       panel.castShadow = true;
-      addPanelGrid(panel, segmentLength, item.array.panelWidthM);
-      pivot.add(panel);
+      addPanelGrid(panel, segmentLength, segmentWidth);
+      link.add(panel);
+      if (panelIndex > 0) {
+        const hingeLength = foldDirection === "lateral" ? segmentWidth * 0.9 : item.array.panelLengthM * 0.9;
+        const hinge = new THREE.Mesh(
+          new THREE.CylinderGeometry(panelThickness * 0.72, panelThickness * 0.72, hingeLength, 12),
+          darkMaterial,
+        );
+        hinge.name = `solar-panel-hinge-${sign}-${panelIndex}`;
+        if (foldDirection === "longitudinal") {
+          hinge.rotation.z = Math.PI / 2;
+          hinge.position.x = sign * item.array.panelLengthM / 2;
+        }
+        link.add(hinge);
+      }
+      previousLink.add(link);
+      previousLink = link;
     }
     const boom = new THREE.Mesh(
       new THREE.CylinderGeometry(equipmentScale * 0.18, equipmentScale * 0.18, item.array.panelLengthM, 12),
       darkMaterial,
     );
     boom.rotation.z = Math.PI / 2;
-    boom.position.x = sign * item.array.panelLengthM / 2;
+    boom.position.x = sign * item.array.panelLengthM / 2 * deployment;
     boom.position.y = -item.array.panelWidthM * 0.54;
+    boom.scale.y = Math.max(0.08, deployment);
     pivot.add(boom);
     arrayMount.add(pivot);
   });

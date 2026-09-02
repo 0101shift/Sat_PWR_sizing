@@ -30,7 +30,9 @@ const mission: MissionConfig = {
 const power: PowerConfig = {
   cellModel: "AZUR_3G30_ADV_4X8", vmpV: 2.411, impA: 0.499, vscV: 2.7, iscA: 0.515,
   eolVmpV: 2.262, eolImpA: 0.494, eolVocV: 2.552, eolIscA: 0.511, cellAreaCm2: 30.18,
-  seriesCells: 19, parallelStrings: 24, packagingEfficiencyPct: 90, fluenceE14Cm2: 5,
+  seriesCells: 19, parallelStrings: 24, scenarioSeriesCells: 22, scenarioParallelStrings: 28,
+  arrayFaultMode: "STRING_FAILURE", failedParallelStrings: 2,
+  packagingEfficiencyPct: 90, fluenceE14Cm2: 5,
   referenceIrradianceWm2: 1367, referenceTemperatureC: 28, operatingTemperatureC: 60,
   powerTempCoefficientPctC: -0.08, pointingErrorDeg: 0, angularResponseExponent: 1,
   mpptEfficiencyPct: 95, harnessEfficiencyPct: 98, mismatchLossPct: 2, diodeLossPct: 1,

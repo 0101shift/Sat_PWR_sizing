@@ -6,6 +6,7 @@ export const ORBIT_PWR_PROJECT_SPACECRAFT_SCHEMA = "orbit-pwr-project-spacecraft
 export const ORBIT_PWR_MAX_LOAD_SCHEMA = "orbit-pwr-dil-max-loads/v1";
 
 export type ProjectPlotVisibility = {
+  raw?: boolean;
   primary: boolean;
   modeled: boolean;
   perfect: boolean;
@@ -98,6 +99,7 @@ export function isOrbitPwrProjectDocument(value: unknown): value is OrbitPwrProj
   if (typeof dashboard.playbackSpeed !== "number" || !Number.isFinite(dashboard.playbackSpeed) || dashboard.playbackSpeed <= 0) return false;
   const visibility = dashboard.plotVisibility;
   if (!["primary", "modeled", "perfect", "load", "soc"].every((key) => typeof visibility[key] === "boolean")) return false;
+  if (visibility.raw !== undefined && typeof visibility.raw !== "boolean") return false;
   if (typeof dashboard.dil.sampleIntervalSec !== "string") return false;
   if (typeof dashboard.dil.referenceAxisOverride !== "string") return false;
   if (dashboard.dil.sourceFileName !== undefined && typeof dashboard.dil.sourceFileName !== "string") return false;

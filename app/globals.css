@@ -428,6 +428,48 @@ select:focus-visible {
   line-height: 1.45;
 }
 
+.array-fault-input {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.array-fault-readout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 11px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.array-fault-readout > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  background: var(--field);
+}
+
+.array-fault-readout span {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.array-fault-readout b {
+  color: #c8dddd;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.array-fault-readout[data-active="true"] b {
+  color: #f0bb5a;
+}
+
 .calculation-toolkit {
   padding-top: 16px;
 }
@@ -1179,6 +1221,7 @@ input[type="range"] {
 .visual-panel,
 .chart-card,
 .axis-card,
+.daily-energy-card,
 .operation-energy-card {
   border: 1px solid var(--line);
   background: var(--panel);
@@ -1946,7 +1989,49 @@ input[type="range"] {
 
 .power-chart-interactive .power-chart {
   height: 100%;
-  cursor: crosshair;
+  cursor: grab;
+}
+
+.power-chart-interactive .power-chart.is-panning { cursor: grabbing; }
+
+.power-chart-navigation {
+  position: absolute;
+  z-index: 4;
+  top: 4px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-2);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.power-chart-navigation button {
+  min-height: 21px;
+  padding: 3px 8px;
+  border: 1px solid rgba(102, 171, 174, 0.42);
+  background: rgba(7, 18, 22, 0.9);
+  color: #9bd6d3;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0.04em;
+  pointer-events: auto;
+  text-transform: uppercase;
+}
+
+.power-chart-navigation button:hover:not(:disabled),
+.power-chart-navigation button:focus-visible {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.power-chart-navigation button:disabled {
+  opacity: 0.42;
+  cursor: default;
 }
 
 .power-chart-tooltip {
@@ -2074,6 +2159,9 @@ input[type="range"] {
 }
 
 .power-key { background: var(--teal); }
+.raw-key {
+  background: repeating-linear-gradient(90deg, #7eccff 0 7px, transparent 7px 11px);
+}
 .measured-key {
   background: repeating-linear-gradient(90deg, #6fa8ff 0 6px, transparent 6px 9px);
 }
@@ -2090,6 +2178,68 @@ input[type="range"] {
 }
 .load-key { background: #ff7aa8; }
 .soc-key { background: #ffd166; }
+
+.daily-energy-card {
+  min-width: 0;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.daily-energy-table-wrap {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--line);
+}
+
+.daily-energy-table-wrap.is-scrollable {
+  max-height: 124px;
+  overflow-y: auto;
+  scrollbar-color: var(--teal) #071216;
+  scrollbar-width: thin;
+}
+
+.daily-energy-table {
+  width: 100%;
+  min-width: 1040px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+}
+
+.daily-energy-table th,
+.daily-energy-table td {
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.daily-energy-table th:first-child,
+.daily-energy-table td:first-child { text-align: center; }
+.daily-energy-table th {
+  color: var(--muted-2);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.daily-energy-table td { color: #bad1d0; }
+.daily-energy-table td small { display: block; margin-top: 3px; color: var(--muted); }
+.daily-energy-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #09171b;
+}
+.daily-energy-table tr.current-day td { background: rgba(81, 217, 212, 0.025); }
+.daily-energy-table td.positive-energy,
+.operation-energy-table td.positive { color: #65d98e; font-weight: 700; }
+.daily-energy-table td.negative-energy,
+.operation-energy-table td.negative { color: #c86676; font-weight: 700; }
 
 .operation-energy-card {
   min-width: 0;
@@ -2244,8 +2394,8 @@ input[type="range"] {
 .operation-load-cell input:focus { box-shadow: inset 0 0 0 1px var(--teal); }
 .operation-load-cell input::placeholder { color: var(--muted-2); }
 .operation-load-cell label > span { padding-right: 7px; color: var(--muted-2); }
-.operation-energy-table td.positive { color: var(--teal); font-weight: 700; }
-.operation-energy-table td.negative { color: #ff8a78; font-weight: 700; }
+.operation-energy-table td.positive { color: #65d98e; font-weight: 700; }
+.operation-energy-table td.negative { color: #c86676; font-weight: 700; }
 
 .operation-energy-table .dil-ratio-number {
   color: #c7b0ff;
@@ -2397,8 +2547,8 @@ input[type="range"] {
   font-weight: 550;
 }
 
-.positive { color: var(--teal); }
-.negative { color: var(--danger); }
+.positive { color: #65d98e; }
+.negative { color: #c86676; }
 
 .design-alert {
   display: flex;
@@ -3065,7 +3215,7 @@ input[type="range"] {
 }
 
 .cockpit-output-metrics td[data-state="good"] {
-  background: #0a2426;
+  background: #09171b;
 }
 
 .cockpit-output-metrics td[data-state="watch"] {
@@ -3073,8 +3223,11 @@ input[type="range"] {
 }
 
 .cockpit-output-metrics td[data-state="critical"] {
-  background: #2c1515;
+  background: #09171b;
 }
+
+.cockpit-output-metrics td[data-state="good"] strong { color: #65d98e; }
+.cockpit-output-metrics td[data-state="critical"] strong { color: #c86676; }
 
 .cockpit-output-metrics td.is-updating {
   animation: power-metric-state-change 650ms ease-out;
@@ -3232,7 +3385,10 @@ input[type="range"] {
   flex-direction: column;
   gap: 9px;
   padding: 12px 12px 10px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: var(--teal) #071216;
+  scrollbar-width: thin;
   background:
     linear-gradient(rgba(32, 61, 66, 0.045) 1px, transparent 1px),
     linear-gradient(90deg, rgba(32, 61, 66, 0.045) 1px, transparent 1px),
@@ -3241,9 +3397,11 @@ input[type="range"] {
 }
 
 .layout-cockpit .cockpit-power-pane.has-dil-operations {
-  display: grid;
-  grid-template-rows: minmax(250px, 1.1fr) auto minmax(300px, 0.9fr) auto auto;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
+  scrollbar-color: var(--teal) #071216;
+  scrollbar-width: thin;
 }
 
 .layout-cockpit .cockpit-power-pane > .analysis-grid {
@@ -3258,7 +3416,24 @@ input[type="range"] {
 }
 
 .layout-cockpit .cockpit-power-pane.has-dil-operations > .analysis-grid {
-  min-height: 0;
+  flex: 0 0 clamp(340px, 46vh, 520px);
+  min-height: 340px;
+}
+
+.layout-cockpit .cockpit-power-pane > .daily-energy-card {
+  order: 3;
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.layout-cockpit .cockpit-power-pane > .daily-energy-card .daily-energy-table-wrap {
+  max-height: none;
+}
+
+.layout-cockpit .cockpit-power-pane > .daily-energy-card .daily-energy-table-wrap.is-scrollable {
+  max-height: 124px;
 }
 
 .layout-cockpit .cockpit-power-pane .chart-card,
@@ -3321,7 +3496,7 @@ input[type="range"] {
 }
 
 .layout-cockpit .cockpit-power-pane > .engineering-strip {
-  order: 3;
+  order: 6;
   flex: 0 0 auto;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   margin: 0;
@@ -3349,8 +3524,9 @@ input[type="range"] {
 
 .layout-cockpit .cockpit-power-pane > .operation-energy-card {
   order: 4;
-  flex: 0 1 245px;
-  min-height: 190px;
+  flex: 0 0 clamp(320px, 44vh, 460px);
+  height: clamp(320px, 44vh, 460px);
+  min-height: 320px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   margin: 0;
@@ -3359,7 +3535,7 @@ input[type="range"] {
 }
 
 .layout-cockpit .cockpit-power-pane.has-dil-operations > .operation-energy-card {
-  min-height: 0;
+  min-height: 320px;
 }
 
 .layout-cockpit .operation-energy-table-wrap {
@@ -3401,7 +3577,7 @@ input[type="range"] {
 }
 
 .layout-cockpit .power-output-metrics {
-  order: 6;
+  order: 7;
   flex: 0 0 auto;
 }
 
